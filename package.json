@@ -1,0 +1,27 @@
+{
+  "name": "node-red-dashboard-2-ui-editor",
+  "version": "0.1.0",
+  "description": "WYSIWYG UI editor for Node-RED Dashboard 2. Drag widgets visually onto a live preview of pages and groups; the matching nodes are created and wired in the Node-RED flow canvas in the background.",
+  "keywords": [
+    "node-red",
+    "node-red-plugin",
+    "dashboard",
+    "dashboard-2",
+    "flowfuse",
+    "wysiwyg",
+    "ui",
+    "editor",
+    "drag-and-drop"
+  ],
+  "license": "MIT",
+  "node-red": {
+    "version": ">=3.0.0",
+    "plugins": {
+      "dashboard-2-ui-editor": "lib/ui-editor.js"
+    }
+  },
+  "files": [
+    "lib/",
+    "resources/"
+  ]
+}
