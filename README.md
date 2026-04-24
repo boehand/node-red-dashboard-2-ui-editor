@@ -83,10 +83,6 @@ Static files under `resources/` are served by Node-RED at
 - **Schematic preview**, not a pixel-perfect Vuetify render. Widgets appear as
   labelled tiles that occupy the correct number of grid columns; actual
   runtime rendering still happens under `/dashboard`.
-- Reordering widgets by dragging within a group is not yet implemented (you
-  can still adjust `order` via the node's edit dialog).
-- Assumes a single `ui-base`; multiple dashboards are not surfaced in the
-  preview yet.
 
 ## License
 
