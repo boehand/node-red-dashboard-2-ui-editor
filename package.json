@@ -14,6 +14,9 @@
     "drag-and-drop"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=14"
+  },
   "node-red": {
     "version": ">=3.0.0",
     "plugins": {
@@ -23,5 +26,36 @@
   "files": [
     "lib/",
     "resources/"
-  ]
+  ],
+  "scripts": {
+    "lint": "eslint --ext .js .",
+    "lint:fix": "eslint --ext .js . --fix",
+    "test": "mocha \"test/**/*.spec.js\"",
+    "test:cov": "npx nyc mocha \"test/**/*.spec.js\" && npx nyc report --reporter=html",
+    "test:cov:view": "npx open-cli coverage/index.html",
+    "test:debug": "mocha --inspect=9226 \"test/**/*.spec.js\""
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-n": "^16.6.2",
+    "eslint-plugin-promise": "^6.6.0",
+    "jsdom": "^25.0.0",
+    "mocha": "^11.7.5",
+    "node-red-node-test-helper": "^0.3.5",
+    "should": "^13.2.3",
+    "should-sinon": "^0.0.6",
+    "sinon": "^21.0.0"
+  },
+  "nyc": {
+    "include": [
+      "lib/**/*.js"
+    ],
+    "reporter": [
+      "text",
+      "html"
+    ],
+    "all": true
+  }
 }

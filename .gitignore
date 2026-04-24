@@ -4,3 +4,6 @@ npm-debug.log
 .idea/
 .vscode/
 *.log
+coverage/
+.nyc_output/
+package-lock.json
