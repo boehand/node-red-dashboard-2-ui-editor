@@ -61,6 +61,8 @@ function buildRED (win, nodeStore) {
                 if (i >= 0) nodes.splice(i, 1)
             },
             node: function (id) { return nodes.find(n => n.id === id) || null },
+            // Simulate Dashboard 2 node types being registered (returns a truthy stub)
+            getType: function (type) { return type && type.startsWith('ui-') ? { type } : null },
             dirty: function () {}
         },
         view: { redraw: function () {}, reveal: function () {} },
