@@ -33,6 +33,10 @@
                         <i class="fa fa-th-large"></i>
                         <span>Dashboard 2 — UI Editor</span>
                     </div>
+                    <div class="d2ed-base-selector" hidden>
+                        <label class="d2ed-base-label">Dashboard:</label>
+                        <select class="d2ed-base-select"></select>
+                    </div>
                     <div class="d2ed-toolbar-right">
                         <button class="d2ed-btn" data-action="add-page" title="Add page">
                             <i class="fa fa-plus"></i> Page
@@ -82,14 +86,26 @@
 
             // -------- editor state --------
             const state = {
-                activePageId: null
+                activePageId: null,
+                activeBaseId: null
             }
 
             // -------- helpers: read dashboard model from RED.nodes --------
+            function findAllBases () {
+                const bases = []
+                RED.nodes.eachConfig(n => { if (n.type === 'ui-base') bases.push(n) })
+                return bases
+            }
+
             function findBase () {
-                let base = null
-                RED.nodes.eachConfig(n => { if (!base && n.type === 'ui-base') base = n })
-                return base
+                const bases = findAllBases()
+                if (!bases.length) return null
+                if (state.activeBaseId) {
+                    const found = bases.find(b => b.id === state.activeBaseId)
+                    if (found) return found
+                }
+                state.activeBaseId = bases[0].id
+                return bases[0]
             }
 
             function findPages (baseId) {
@@ -125,7 +141,6 @@
             function activeFlowId () {
                 const ws = RED.workspaces.active()
                 if (ws) return ws
-                // fallback: first flow tab
                 let id = null
                 RED.nodes.eachWorkspace(w => { if (!id) id = w.id })
                 return id
@@ -152,6 +167,7 @@
                     allowInstall: false
                 }
                 RED.nodes.add(base)
+                state.activeBaseId = base.id
                 return base
             }
 
@@ -220,7 +236,6 @@
                     RED.notify('No active flow to drop the widget into.', 'warning')
                     return null
                 }
-                // pick a free-ish position near the top-right of the current workspace
                 const offsets = widgetSpawnOffset(flowId)
                 const node = Object.assign({
                     id: RED.nodes.id(),
@@ -297,6 +312,36 @@
 
             paletteFilter.addEventListener('input', renderPalette)
 
+            // -------- base selector --------
+            const baseSelectorEl = root.querySelector('.d2ed-base-selector')
+            const baseSelectEl = root.querySelector('.d2ed-base-select')
+
+            function renderBaseSelector () {
+                const bases = findAllBases()
+                baseSelectorEl.hidden = bases.length <= 1
+
+                if (!bases.length) return
+
+                if (!state.activeBaseId || !bases.find(b => b.id === state.activeBaseId)) {
+                    state.activeBaseId = bases[0].id
+                }
+
+                baseSelectEl.innerHTML = ''
+                bases.forEach(b => {
+                    const opt = document.createElement('option')
+                    opt.value = b.id
+                    opt.textContent = b.name || 'Dashboard'
+                    opt.selected = b.id === state.activeBaseId
+                    baseSelectEl.appendChild(opt)
+                })
+            }
+
+            baseSelectEl.addEventListener('change', function () {
+                state.activeBaseId = this.value
+                state.activePageId = null
+                render()
+            })
+
             // -------- preview rendering --------
             const tabsEl = root.querySelector('.d2ed-page-tabs')
             const previewEl = root.querySelector('.d2ed-preview')
@@ -304,6 +349,7 @@
 
             function render () {
                 renderPalette()
+                renderBaseSelector()
                 const base = findBase()
                 const pages = base ? findPages(base.id) : []
 
@@ -373,13 +419,13 @@
 
                 widgets.forEach(w => body.appendChild(renderWidget(w, group)))
 
-                // trailing drop target that fills the row
                 const drop = document.createElement('div')
                 drop.className = 'd2ed-drop-hint'
                 drop.textContent = widgets.length ? '+ drop widget' : '+ drop your first widget here'
                 body.appendChild(drop)
 
                 makeDropZone(body, { group })
+                setupGroupReorderDnD(body, group)
                 el.appendChild(body)
                 return el
             }
@@ -394,6 +440,7 @@
                 const rowSpan = Math.max(1, node.height || 1)
                 el.style.gridRow = 'span ' + rowSpan
                 el.dataset.nodeId = node.id
+                el.draggable = true
                 el.innerHTML = `
                     <div class="d2ed-widget-face">
                         <div class="d2ed-widget-icon"><i class="fa ${cat.icon}"></i></div>
@@ -408,6 +455,15 @@
                         <button title="Delete" data-action="delete"><i class="fa fa-trash"></i></button>
                     </div>
                 `
+                el.addEventListener('dragstart', ev => {
+                    ev.dataTransfer.setData('application/x-d2-reorder', node.id)
+                    ev.dataTransfer.effectAllowed = 'move'
+                    // defer adding the class so the drag ghost captures the normal look
+                    setTimeout(() => el.classList.add('d2ed-widget--dragging'), 0)
+                })
+                el.addEventListener('dragend', () => {
+                    el.classList.remove('d2ed-widget--dragging')
+                })
                 el.querySelector('[data-action="edit"]').addEventListener('click', e => { e.stopPropagation(); editNode(node.id) })
                 el.querySelector('[data-action="reveal"]').addEventListener('click', e => { e.stopPropagation(); revealNode(node.id) })
                 el.querySelector('[data-action="delete"]').addEventListener('click', e => { e.stopPropagation(); deleteNode(node.id) })
@@ -415,7 +471,73 @@
                 return el
             }
 
-            // -------- drag-drop --------
+            // -------- widget reorder drag-and-drop --------
+            function setupGroupReorderDnD (body, group) {
+                let dropTargetEl = null
+                let dropBefore = true
+
+                function clearIndicators () {
+                    if (dropTargetEl) {
+                        dropTargetEl.classList.remove('d2ed-widget--drop-before', 'd2ed-widget--drop-after')
+                        dropTargetEl = null
+                    }
+                }
+
+                body.addEventListener('dragover', ev => {
+                    if (!ev.dataTransfer.types.includes('application/x-d2-reorder')) return
+                    ev.preventDefault()
+                    ev.dataTransfer.dropEffect = 'move'
+
+                    const widgetEl = ev.target.closest('.d2ed-widget')
+                    if (widgetEl) {
+                        if (dropTargetEl !== widgetEl) {
+                            clearIndicators()
+                            dropTargetEl = widgetEl
+                        }
+                        const rect = widgetEl.getBoundingClientRect()
+                        const before = ev.clientY < rect.top + rect.height / 2
+                        if (before !== dropBefore || !widgetEl.classList.contains('d2ed-widget--drop-before') && !widgetEl.classList.contains('d2ed-widget--drop-after')) {
+                            dropBefore = before
+                            widgetEl.classList.toggle('d2ed-widget--drop-before', before)
+                            widgetEl.classList.toggle('d2ed-widget--drop-after', !before)
+                        }
+                    } else {
+                        clearIndicators()
+                    }
+                })
+
+                body.addEventListener('dragleave', ev => {
+                    if (!body.contains(ev.relatedTarget)) {
+                        clearIndicators()
+                    }
+                })
+
+                body.addEventListener('drop', ev => {
+                    const draggedId = ev.dataTransfer.getData('application/x-d2-reorder')
+                    if (!draggedId) return
+                    ev.preventDefault()
+                    const tid = dropTargetEl ? dropTargetEl.dataset.nodeId : null
+                    const before = dropBefore
+                    clearIndicators()
+                    if (!tid || draggedId === tid) return
+                    reorderWidgets(draggedId, tid, before, group)
+                })
+            }
+
+            function reorderWidgets (draggedId, targetId, before, group) {
+                const dragged = RED.nodes.node(draggedId)
+                if (!dragged || dragged.group !== group.id) return
+                const widgets = findWidgets(group.id)
+                const others = widgets.filter(w => w.id !== draggedId)
+                const targetIdx = others.findIndex(w => w.id === targetId)
+                if (targetIdx === -1) return
+                const insertAt = before ? targetIdx : targetIdx + 1
+                others.splice(insertAt, 0, dragged)
+                others.forEach((w, i) => { w.order = i })
+                commit()
+            }
+
+            // -------- drag-drop (palette → group) --------
             function makeDropZone (el, target) {
                 el.addEventListener('dragover', ev => {
                     if (!ev.dataTransfer.types.includes('application/x-d2-widget')) return
@@ -472,7 +594,6 @@
                 const node = RED.nodes.node(id)
                 if (!node) return
                 try {
-                    // flow nodes have a workspace id (z); config nodes don't
                     if (node.z) {
                         RED.editor.edit(node)
                     } else {
