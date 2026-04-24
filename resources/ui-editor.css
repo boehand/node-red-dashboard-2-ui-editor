@@ -366,48 +366,12 @@
     opacity: 1;
 }
 
-.d2ed-root .d2ed-widget-face {
+.d2ed-root .d2ed-widget-preview {
     flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    min-width: 0;
-}
-
-.d2ed-root .d2ed-widget-icon {
-    flex: 0 0 auto;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: #0094CE;
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-}
-
-.d2ed-root .d2ed-widget-text {
-    flex: 1 1 auto;
-    min-width: 0;
-    line-height: 1.2;
-}
-
-.d2ed-root .d2ed-widget-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #1b2733;
-    white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.d2ed-root .d2ed-widget-type {
-    font-size: 10px;
-    color: #6e7a88;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+    display: flex;
+    align-items: stretch;
+    min-width: 0;
 }
 
 .d2ed-root .d2ed-widget-actions {
@@ -500,4 +464,524 @@ body.d2ed-dragging .d2ed-root .d2ed-drop-hint {
     margin: 0;
     max-width: 360px;
     line-height: 1.4;
+}
+
+/* ========== widget preview: shared base ========== */
+
+.d2ed-root .d2ed-pw {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4px 6px;
+    min-width: 0;
+    overflow: hidden;
+    gap: 2px;
+}
+
+.d2ed-root .d2ed-pw-lbl {
+    font-size: 10px;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------- button ---------- */
+.d2ed-root .d2ed-pw-button {
+    align-items: center;
+    justify-content: center;
+}
+
+.d2ed-root .d2ed-pw-btn {
+    padding: 4px 12px;
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 11px;
+    cursor: default;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* ---------- switch ---------- */
+.d2ed-root .d2ed-pw-switch {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+}
+
+.d2ed-root .d2ed-pw-toggle {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 16px;
+    border-radius: 8px;
+    background: #0094CE;
+    position: relative;
+}
+
+.d2ed-root .d2ed-pw-toggle.is-off {
+    background: #ccc;
+}
+
+.d2ed-root .d2ed-pw-toggle-thumb {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+}
+
+.d2ed-root .d2ed-pw-toggle.is-off .d2ed-pw-toggle-thumb {
+    right: auto;
+    left: 2px;
+}
+
+/* ---------- slider ---------- */
+.d2ed-root .d2ed-pw-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.d2ed-root .d2ed-pw-slider-bound {
+    font-size: 9px;
+    color: #999;
+    flex: 0 0 auto;
+}
+
+.d2ed-root .d2ed-pw-slider-track {
+    flex: 1 1 auto;
+    height: 4px;
+    background: #e0e0e0;
+    border-radius: 2px;
+    position: relative;
+}
+
+.d2ed-root .d2ed-pw-slider-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: #0094CE;
+    border-radius: 2px;
+}
+
+.d2ed-root .d2ed-pw-slider-thumb {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #0094CE;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #0094CE;
+}
+
+/* ---------- dropdown ---------- */
+.d2ed-root .d2ed-pw-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 5px;
+    border: 1px solid #c7ccd2;
+    border-radius: 3px;
+    font-size: 11px;
+    background: #fff;
+    gap: 4px;
+    overflow: hidden;
+}
+
+.d2ed-root .d2ed-pw-select span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.d2ed-root .d2ed-pw-select i {
+    font-size: 9px;
+    color: #aaa;
+    flex: 0 0 auto;
+}
+
+/* ---------- text input / number input ---------- */
+.d2ed-root .d2ed-pw-input-field {
+    border: 1px solid #c7ccd2;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 11px;
+    min-height: 18px;
+    background: #fff;
+    color: #aaa;
+}
+
+.d2ed-root .d2ed-pw-number-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.d2ed-root .d2ed-pw-num-btn {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border: 1px solid #c7ccd2;
+    border-radius: 2px;
+    background: #f5f5f5;
+    font-size: 13px;
+    line-height: 1;
+    cursor: default;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #555;
+}
+
+.d2ed-root .d2ed-pw-number-val {
+    flex: 1 1 auto;
+    text-align: center;
+    border: 1px solid #c7ccd2;
+    border-radius: 2px;
+    font-size: 11px;
+    padding: 2px 4px;
+    background: #fff;
+}
+
+/* ---------- radio group ---------- */
+.d2ed-root .d2ed-pw-radio-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+}
+
+.d2ed-root .d2ed-pw-radio-dot {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid #c7ccd2;
+    background: #fff;
+}
+
+.d2ed-root .d2ed-pw-radio-dot.is-on {
+    border-color: #0094CE;
+    background: #0094CE;
+    box-shadow: inset 0 0 0 2px #fff;
+}
+
+/* ---------- button group ---------- */
+.d2ed-root .d2ed-pw-btn-group-row {
+    display: flex;
+    gap: 2px;
+}
+
+.d2ed-root .d2ed-pw-btn-group-btn {
+    flex: 1 1 auto;
+    padding: 3px 4px;
+    font-size: 10px;
+    border: 1px solid #c7ccd2;
+    border-radius: 2px;
+    background: #f5f5f5;
+    cursor: default;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.d2ed-root .d2ed-pw-btn-group-btn.is-active {
+    background: #0094CE;
+    color: #fff;
+    border-color: #0094CE;
+}
+
+/* ---------- form ---------- */
+.d2ed-root .d2ed-pw-form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-bottom: 2px;
+}
+
+.d2ed-root .d2ed-pw-btn-form {
+    margin-top: 2px;
+    background: #0094CE;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 10px;
+    cursor: default;
+    align-self: flex-start;
+}
+
+/* ---------- file input ---------- */
+.d2ed-root .d2ed-pw-file {
+    align-items: center;
+    justify-content: center;
+}
+
+.d2ed-root .d2ed-pw-btn-outline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 1.5px dashed #0094CE;
+    border-radius: 4px;
+    background: #fff;
+    color: #0094CE;
+    font-size: 11px;
+    cursor: default;
+}
+
+/* ---------- text display ---------- */
+.d2ed-root .d2ed-pw-text-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: #0094CE;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------- gauge ---------- */
+.d2ed-root .d2ed-pw-gauge {
+    align-items: center;
+}
+
+.d2ed-root .d2ed-pw-gauge-svg {
+    width: 100%;
+    max-height: 56px;
+}
+
+.d2ed-root .d2ed-pw-gauge-title {
+    font-size: 10px;
+    color: #555;
+    text-align: center;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* ---------- chart ---------- */
+.d2ed-root .d2ed-pw-chart {
+    gap: 2px;
+}
+
+.d2ed-root .d2ed-pw-chart-title {
+    font-size: 10px;
+    color: #555;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.d2ed-root .d2ed-pw-chart-svg {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 30px;
+}
+
+/* ---------- table ---------- */
+.d2ed-root .d2ed-pw-table {
+    gap: 2px;
+}
+
+.d2ed-root .d2ed-pw-table-head {
+    display: flex;
+    border-bottom: 1.5px solid #e0e0e0;
+    padding-bottom: 2px;
+}
+
+.d2ed-root .d2ed-pw-table-head span {
+    flex: 1 1 0;
+    font-size: 9px;
+    font-weight: 700;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.d2ed-root .d2ed-pw-table-row {
+    display: flex;
+}
+
+.d2ed-root .d2ed-pw-table-row span {
+    flex: 1 1 0;
+    font-size: 10px;
+    color: #aaa;
+}
+
+/* ---------- progress ---------- */
+.d2ed-root .d2ed-pw-progress-track {
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.d2ed-root .d2ed-pw-progress-fill {
+    height: 100%;
+    background: #0094CE;
+    border-radius: 3px;
+}
+
+.d2ed-root .d2ed-pw-progress-val {
+    font-size: 10px;
+    color: #555;
+    align-self: flex-end;
+}
+
+/* ---------- notification ---------- */
+.d2ed-root .d2ed-pw-notification {
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+}
+
+.d2ed-root .d2ed-pw-notification i {
+    font-size: 14px;
+    color: #0094CE;
+    flex: 0 0 auto;
+}
+
+.d2ed-root .d2ed-pw-notification span {
+    font-size: 11px;
+}
+
+.d2ed-root .d2ed-pw-notif-pos {
+    font-size: 9px !important;
+    color: #aaa !important;
+    margin-left: auto;
+}
+
+/* ---------- audio ---------- */
+.d2ed-root .d2ed-pw-audio {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.d2ed-root .d2ed-pw-audio i {
+    font-size: 14px;
+    color: #0094CE;
+}
+
+.d2ed-root .d2ed-pw-audio-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 16px;
+}
+
+.d2ed-root .d2ed-pw-audio-bar div {
+    width: 3px;
+    background: #0094CE;
+    border-radius: 1px;
+}
+
+.d2ed-root .d2ed-pw-audio-bar div:nth-child(1) { height: 40%; }
+.d2ed-root .d2ed-pw-audio-bar div:nth-child(2) { height: 80%; }
+.d2ed-root .d2ed-pw-audio-bar div:nth-child(3) { height: 60%; }
+.d2ed-root .d2ed-pw-audio-bar div:nth-child(4) { height: 100%; }
+.d2ed-root .d2ed-pw-audio-bar div:nth-child(5) { height: 50%; }
+
+/* ---------- markdown ---------- */
+.d2ed-root .d2ed-pw-markdown {
+    justify-content: flex-start;
+    gap: 2px;
+}
+
+.d2ed-root .d2ed-pw-md-h1 {
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+}
+
+.d2ed-root .d2ed-pw-md-p {
+    font-size: 10px;
+    color: #666;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------- template ---------- */
+.d2ed-root .d2ed-pw-template {
+    background: #f7f8fa;
+    justify-content: flex-start;
+    align-items: flex-start;
+}
+
+.d2ed-root .d2ed-pw-code {
+    font-family: monospace;
+    font-size: 9px;
+    color: #0074a8;
+    white-space: pre;
+    overflow: hidden;
+    line-height: 1.4;
+    max-width: 100%;
+}
+
+/* ---------- spacer ---------- */
+.d2ed-root .d2ed-pw-spacer {
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 2px;
+}
+
+.d2ed-root .d2ed-pw-spacer-inner {
+    flex: 1 1 auto;
+    background: repeating-linear-gradient(
+        45deg,
+        #ebebeb,
+        #ebebeb 4px,
+        #f7f8fa 4px,
+        #f7f8fa 8px
+    );
+    border-radius: 2px;
+    min-height: 16px;
+}
+
+/* ---------- generic fallback ---------- */
+.d2ed-root .d2ed-pw-generic {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.d2ed-root .d2ed-pw-generic-icon {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #0094CE;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+}
+
+.d2ed-root .d2ed-pw-generic-label {
+    flex: 1 1 auto;
+    font-size: 11px;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }

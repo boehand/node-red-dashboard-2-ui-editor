@@ -536,8 +536,236 @@
                 return el
             }
 
+            // -------- widget preview renderers --------
+            // Each function returns an HTML string that approximates how the
+            // widget looks at runtime in Dashboard 2 / Vuetify.
+            function widgetPreviewHTML (node) {
+                const lbl = escapeHtml(node.label || node.name || node.title || '')
+                const e = escapeHtml
+
+                switch (node.type) {
+                    case 'ui-button': {
+                        const color = e(node.color || '#0094CE')
+                        return `<div class="d2ed-pw d2ed-pw-button">
+                            <button class="d2ed-pw-btn" style="background:${color}">${lbl || 'button'}</button>
+                        </div>`
+                    }
+                    case 'ui-switch': {
+                        const on = !!node.passthru
+                        return `<div class="d2ed-pw d2ed-pw-switch">
+                            <span class="d2ed-pw-lbl">${lbl}</span>
+                            <div class="d2ed-pw-toggle${on ? '' : ' is-off'}">
+                                <div class="d2ed-pw-toggle-thumb"></div>
+                            </div>
+                        </div>`
+                    }
+                    case 'ui-slider': {
+                        const mn = node.min !== undefined ? node.min : 0
+                        const mx = node.max !== undefined ? node.max : 10
+                        return `<div class="d2ed-pw d2ed-pw-slider">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            <div class="d2ed-pw-slider-row">
+                                <span class="d2ed-pw-slider-bound">${e(String(mn))}</span>
+                                <div class="d2ed-pw-slider-track">
+                                    <div class="d2ed-pw-slider-fill" style="width:50%"></div>
+                                    <div class="d2ed-pw-slider-thumb" style="left:50%"></div>
+                                </div>
+                                <span class="d2ed-pw-slider-bound">${e(String(mx))}</span>
+                            </div>
+                        </div>`
+                    }
+                    case 'ui-dropdown': {
+                        const first = node.options && node.options[0] ? e(String(node.options[0].label || node.options[0].value || 'Option 1')) : 'Option 1'
+                        return `<div class="d2ed-pw d2ed-pw-dropdown">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            <div class="d2ed-pw-select">
+                                <span>${first}</span>
+                                <i class="fa fa-chevron-down"></i>
+                            </div>
+                        </div>`
+                    }
+                    case 'ui-text-input': {
+                        const mode = node.mode || 'text'
+                        return `<div class="d2ed-pw d2ed-pw-text-input">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            <div class="d2ed-pw-input-field d2ed-pw-input-${e(mode)}">${mode === 'password' ? '••••••' : ''}</div>
+                        </div>`
+                    }
+                    case 'ui-number-input': {
+                        return `<div class="d2ed-pw d2ed-pw-number-input">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            <div class="d2ed-pw-number-row">
+                                <button class="d2ed-pw-num-btn">−</button>
+                                <div class="d2ed-pw-number-val">${e(String(node.min || 0))}</div>
+                                <button class="d2ed-pw-num-btn">+</button>
+                            </div>
+                        </div>`
+                    }
+                    case 'ui-radio-group': {
+                        const opts = (node.options || [{ label: 'Option 1', value: 'option-1' }]).slice(0, 4)
+                        return `<div class="d2ed-pw d2ed-pw-radio">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            ${opts.map((o, i) => `<div class="d2ed-pw-radio-row">
+                                <span class="d2ed-pw-radio-dot${i === 0 ? ' is-on' : ''}"></span>
+                                <span>${e(String(o.label || o.value || 'Option'))}</span>
+                            </div>`).join('')}
+                        </div>`
+                    }
+                    case 'ui-button-group': {
+                        const opts = (node.options || [{ label: 'Option 1' }]).slice(0, 4)
+                        return `<div class="d2ed-pw d2ed-pw-btn-group">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            <div class="d2ed-pw-btn-group-row">
+                                ${opts.map((o, i) => `<button class="d2ed-pw-btn-group-btn${i === 0 ? ' is-active' : ''}">${e(String(o.label || o.value || 'Opt'))}</button>`).join('')}
+                            </div>
+                        </div>`
+                    }
+                    case 'ui-form': {
+                        const fields = (node.options || [{ label: 'Name', key: 'name' }]).slice(0, 2)
+                        const submit = e(node.submit || 'Submit')
+                        return `<div class="d2ed-pw d2ed-pw-form">
+                            ${fields.map(f => `<div class="d2ed-pw-form-field">
+                                <span class="d2ed-pw-lbl">${e(String(f.label || f.key || 'Field'))}</span>
+                                <div class="d2ed-pw-input-field"></div>
+                            </div>`).join('')}
+                            <button class="d2ed-pw-btn d2ed-pw-btn-form">${submit}</button>
+                        </div>`
+                    }
+                    case 'ui-file-input': {
+                        return `<div class="d2ed-pw d2ed-pw-file">
+                            <button class="d2ed-pw-btn-outline">
+                                <i class="fa fa-upload"></i> ${lbl || 'Upload'}
+                            </button>
+                        </div>`
+                    }
+                    case 'ui-text': {
+                        const fmt = e(node.format || '{{msg.payload}}')
+                        return `<div class="d2ed-pw d2ed-pw-text">
+                            ${lbl ? `<span class="d2ed-pw-lbl">${lbl}</span>` : ''}
+                            <div class="d2ed-pw-text-value">${fmt}</div>
+                        </div>`
+                    }
+                    case 'ui-gauge': {
+                        const cx = 50, cy = 52, r = 38
+                        const mn = typeof node.min === 'number' ? node.min : 0
+                        const mx = typeof node.max === 'number' ? node.max : 10
+                        const range = mx - mn || 10
+                        const segs = (node.segments && node.segments.length)
+                            ? node.segments
+                            : [{ from: mn, color: '#53B04F' }, { from: mn + range / 3, color: '#FFA500' }, { from: mn + range * 2 / 3, color: '#FF0000' }]
+                        const pt = (pct) => {
+                            const a = Math.PI - Math.max(0, Math.min(1, pct)) * Math.PI
+                            return { x: +(cx + r * Math.cos(a)).toFixed(1), y: +(cy - r * Math.sin(a)).toFixed(1) }
+                        }
+                        const trackL = pt(0), trackR = pt(1)
+                        const segPaths = segs.map((seg, i) => {
+                            const next = segs[i + 1]
+                            const s = (seg.from - mn) / range
+                            const en = next ? (next.from - mn) / range : 1
+                            const a = pt(s), b = pt(en)
+                            const la = (en - s) > 0.5 ? 1 : 0
+                            return `<path d="M${a.x} ${a.y} A${r} ${r} 0 ${la} 0 ${b.x} ${b.y}" fill="none" stroke="${e(seg.color || '#888')}" stroke-width="9" stroke-linecap="butt"/>`
+                        }).join('')
+                        const np = pt(0.5)
+                        const title = e(node.title || node.name || lbl || 'Gauge')
+                        return `<div class="d2ed-pw d2ed-pw-gauge">
+                            <svg viewBox="0 0 100 60" class="d2ed-pw-gauge-svg">
+                                <path d="M${trackL.x} ${trackL.y} A${r} ${r} 0 0 0 ${trackR.x} ${trackR.y}" fill="none" stroke="#e0e0e0" stroke-width="9"/>
+                                ${segPaths}
+                                <line x1="${cx}" y1="${cy}" x2="${np.x}" y2="${+(np.y + 4).toFixed(1)}" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+                                <circle cx="${cx}" cy="${cy}" r="3.5" fill="#444"/>
+                                <text x="${cx}" y="59" text-anchor="middle" font-size="5.5" fill="#999">${e(String(mn))} – ${e(String(mx))}</text>
+                            </svg>
+                            <div class="d2ed-pw-gauge-title">${title}</div>
+                        </div>`
+                    }
+                    case 'ui-chart': {
+                        const title = lbl || e(node.label || 'Chart')
+                        const type = node.chartType || 'line'
+                        let inner = ''
+                        if (type === 'bar') {
+                            inner = `<rect x="10" y="30" width="12" height="20" fill="#0094CE" rx="1"/>
+                                <rect x="28" y="15" width="12" height="35" fill="#0094CE" rx="1"/>
+                                <rect x="46" y="22" width="12" height="28" fill="#0094CE" rx="1"/>
+                                <rect x="64" y="10" width="12" height="40" fill="#0094CE" rx="1"/>
+                                <rect x="82" y="25" width="12" height="25" fill="#0094CE" rx="1"/>`
+                        } else {
+                            inner = `<polyline points="10,40 25,25 40,33 55,14 70,26 90,10" fill="none" stroke="#0094CE" stroke-width="2" stroke-linejoin="round"/>
+                                <polyline points="10,52 10,40 25,25 40,33 55,14 70,26 90,10 90,52" fill="rgba(0,148,206,0.12)" stroke="none"/>`
+                        }
+                        return `<div class="d2ed-pw d2ed-pw-chart">
+                            <div class="d2ed-pw-chart-title">${title}</div>
+                            <svg viewBox="0 0 100 55" class="d2ed-pw-chart-svg" preserveAspectRatio="none">
+                                <line x1="8" y1="4" x2="8" y2="52" stroke="#ddd" stroke-width="1"/>
+                                <line x1="8" y1="52" x2="96" y2="52" stroke="#ddd" stroke-width="1"/>
+                                ${inner}
+                            </svg>
+                        </div>`
+                    }
+                    case 'ui-table': {
+                        const title = lbl || e(node.label || '')
+                        const cols = (node.columns && node.columns.length)
+                            ? node.columns.slice(0, 4).map(c => e(String(c.title || c.key || c)))
+                            : ['Col 1', 'Col 2', 'Col 3']
+                        return `<div class="d2ed-pw d2ed-pw-table">
+                            ${title ? `<div class="d2ed-pw-lbl">${title}</div>` : ''}
+                            <div class="d2ed-pw-table-head">${cols.map(c => `<span>${c}</span>`).join('')}</div>
+                            <div class="d2ed-pw-table-row d2ed-pw-table-empty"><span>—</span></div>
+                        </div>`
+                    }
+                    case 'ui-progress': {
+                        const title = lbl || e(node.label || '')
+                        return `<div class="d2ed-pw d2ed-pw-progress">
+                            ${title ? `<span class="d2ed-pw-lbl">${title}</span>` : ''}
+                            <div class="d2ed-pw-progress-track">
+                                <div class="d2ed-pw-progress-fill" style="width:50%"></div>
+                            </div>
+                            ${node.showValue !== false ? '<span class="d2ed-pw-progress-val">50%</span>' : ''}
+                        </div>`
+                    }
+                    case 'ui-notification': {
+                        const pos = e(node.position || 'bottom right')
+                        return `<div class="d2ed-pw d2ed-pw-notification">
+                            <i class="fa fa-bell"></i>
+                            <span>Notification</span>
+                            <span class="d2ed-pw-notif-pos">${pos}</span>
+                        </div>`
+                    }
+                    case 'ui-audio': {
+                        return `<div class="d2ed-pw d2ed-pw-audio">
+                            <i class="fa fa-volume-up"></i>
+                            <div class="d2ed-pw-audio-bar"><div></div><div></div><div></div><div></div><div></div></div>
+                        </div>`
+                    }
+                    case 'ui-markdown': {
+                        const content = e((node.content || '').substring(0, 60))
+                        return `<div class="d2ed-pw d2ed-pw-markdown">
+                            <div class="d2ed-pw-md-h1">Markdown</div>
+                            <div class="d2ed-pw-md-p">${content || 'Write some <strong>markdown</strong> here.'}</div>
+                        </div>`
+                    }
+                    case 'ui-template': {
+                        const snip = e((node.template || '<div>Template</div>').substring(0, 50))
+                        return `<div class="d2ed-pw d2ed-pw-template">
+                            <code class="d2ed-pw-code">${snip}</code>
+                        </div>`
+                    }
+                    case 'ui-spacer': {
+                        return `<div class="d2ed-pw d2ed-pw-spacer">
+                            <div class="d2ed-pw-spacer-inner"><div></div><div></div></div>
+                        </div>`
+                    }
+                    default: {
+                        const cat = getCatalogEntry(node.type) || { icon: 'fa-cube', label: node.type }
+                        return `<div class="d2ed-pw d2ed-pw-generic">
+                            <div class="d2ed-pw-generic-icon"><i class="fa ${cat.icon}"></i></div>
+                            <div class="d2ed-pw-generic-label">${lbl || e(cat.label)}</div>
+                        </div>`
+                    }
+                }
+            }
+
             function renderWidget (node, group) {
-                const cat = getCatalogEntry(node.type) || { icon: 'fa-cube', label: node.type }
                 const groupCols = group.width || 6
                 const span = !node.width || node.width === 0 ? groupCols : Math.min(groupCols, node.width)
                 const el = document.createElement('div')
@@ -548,13 +776,7 @@
                 el.dataset.nodeId = node.id
                 el.draggable = true
                 el.innerHTML = `
-                    <div class="d2ed-widget-face">
-                        <div class="d2ed-widget-icon"><i class="fa ${cat.icon}"></i></div>
-                        <div class="d2ed-widget-text">
-                            <div class="d2ed-widget-label">${escapeHtml(node.label || node.name || cat.label)}</div>
-                            <div class="d2ed-widget-type">${cat.label}</div>
-                        </div>
-                    </div>
+                    <div class="d2ed-widget-preview">${widgetPreviewHTML(node)}</div>
                     <div class="d2ed-widget-actions">
                         <button title="Edit" data-action="edit"><i class="fa fa-pencil"></i></button>
                         <button title="Reveal on canvas" data-action="reveal"><i class="fa fa-crosshairs"></i></button>
