@@ -61,8 +61,12 @@ function buildRED (win, nodeStore) {
                 if (i >= 0) nodes.splice(i, 1)
             },
             node: function (id) { return nodes.find(n => n.id === id) || null },
-            // Simulate Dashboard 2 node types being registered (returns a truthy stub)
-            getType: function (type) { return type && type.startsWith('ui-') ? { type } : null },
+            // Simulate Dashboard 2 node types being registered (returns a truthy stub).
+            // Pass getTypeOverride to test behaviour when specific types are absent.
+            getType: function (type) {
+                if (RED._unavailableTypes && RED._unavailableTypes.has(type)) return null
+                return type && type.startsWith('ui-') ? { type } : null
+            },
             dirty: function () {}
         },
         view: { redraw: function () {}, reveal: function () {} },
@@ -249,6 +253,39 @@ describe('resources/ui-editor.js', function () {
             root.querySelectorAll('.d2ed-palette-tile').forEach(tile => {
                 tile.draggable.should.be.true()
             })
+        })
+
+        it('should show only registered widget types (Dashboard 2 must be installed)', function () {
+            // All ui-* types are mocked as registered — full catalog should appear
+            const { root, window } = boot()
+            const { WIDGETS } = window.D2UIEditorCatalog
+            root.querySelectorAll('.d2ed-palette-tile').length.should.equal(WIDGETS.length)
+        })
+
+        it('should hide a widget type that is not registered in Node-RED', function () {
+            const nodes = []
+            const { window, dom } = boot(nodes)
+            // Mark ui-gauge as unavailable after boot, then trigger a re-render
+            const RED = window.RED
+            RED._unavailableTypes = new Set(['ui-gauge'])
+            // Trigger re-render via the refresh button
+            const root = RED._tab.content
+            root.querySelector('[data-action="refresh"]').click()
+            const types = Array.from(root.querySelectorAll('.d2ed-palette-tile'))
+                .map(el => el.dataset.widgetType)
+            types.should.not.containEql('ui-gauge')
+        })
+
+        it('should show installation notice when no Dashboard 2 types are registered', function () {
+            const nodes = []
+            const { window } = boot(nodes)
+            const RED = window.RED
+            // Override getType to always return null (Dashboard 2 not installed)
+            RED.nodes.getType = function () { return null }
+            const root = RED._tab.content
+            root.querySelector('[data-action="refresh"]').click()
+            should(root.querySelector('.d2ed-palette-notice')).not.be.null()
+            root.querySelectorAll('.d2ed-palette-tile').length.should.equal(0)
         })
 
         it('filter input should narrow visible tiles', function () {

@@ -250,6 +250,32 @@
                 return group
             }
 
+            // Returns true only when the node type is actually registered in the
+            // Node-RED editor (i.e. Dashboard 2 is installed and loaded).
+            // Mirrors the lookup chain in resolveWidgetType so the palette
+            // never advertises a widget the user cannot actually create.
+            function isWidgetTypeAvailable (type) {
+                if (typeof type !== 'string') return false
+                const normalized = type.replace(/-/g, '_')
+                if (RED.nodes && typeof RED.nodes.getType === 'function') {
+                    if (RED.nodes.getType(type)) return true
+                    if (normalized !== type && RED.nodes.getType(normalized)) return true
+                }
+                if (RED.nodes && RED.nodes.definitions) {
+                    if (RED.nodes.definitions[type]) return true
+                    if (normalized !== type && RED.nodes.definitions[normalized]) return true
+                }
+                if (RED.nodes && RED.nodes.registry && typeof RED.nodes.registry.getType === 'function') {
+                    if (RED.nodes.registry.getType(type)) return true
+                    if (normalized !== type && RED.nodes.registry.getType(normalized)) return true
+                }
+                if (RED.nodes && RED.nodes.registry && RED.nodes.registry.types) {
+                    if (RED.nodes.registry.types[type]) return true
+                    if (normalized !== type && RED.nodes.registry.types[normalized]) return true
+                }
+                return false
+            }
+
             function resolveWidgetType (type) {
                 if (typeof type !== 'string') return type
                 const normalized = type.replace(/-/g, '_')
@@ -341,8 +367,25 @@
             function renderPalette () {
                 paletteList.innerHTML = ''
                 const filter = (paletteFilter.value || '').toLowerCase()
+
+                // If no Dashboard 2 widget type is registered at all, show an
+                // installation hint instead of an empty palette.
+                const anyAvailable = WIDGETS.some(w => isWidgetTypeAvailable(w.type))
+                if (!anyAvailable) {
+                    const notice = document.createElement('div')
+                    notice.className = 'd2ed-palette-notice'
+                    notice.innerHTML = `
+                        <i class="fa fa-exclamation-circle"></i>
+                        <p>Dashboard 2 is not installed.<br>
+                        Install <code>@flowfuse/node-red-dashboard</code> first.</p>
+                    `
+                    paletteList.appendChild(notice)
+                    return
+                }
+
                 CATEGORIES.forEach(cat => {
                     const widgets = WIDGETS.filter(w => w.category === cat.id &&
+                        isWidgetTypeAvailable(w.type) &&
                         (!filter || w.label.toLowerCase().includes(filter) || w.type.includes(filter)))
                     if (!widgets.length) return
                     const section = document.createElement('div')

@@ -186,6 +186,27 @@
     word-break: break-word;
 }
 
+.d2ed-root .d2ed-palette-notice {
+    padding: 16px 10px;
+    text-align: center;
+    color: #c0392b;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.d2ed-root .d2ed-palette-notice i {
+    font-size: 22px;
+    display: block;
+    margin-bottom: 8px;
+}
+
+.d2ed-root .d2ed-palette-notice code {
+    font-size: 11px;
+    background: #f5f5f5;
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+
 .d2ed-root .d2ed-palette-hint {
     padding: 8px 10px;
     font-size: 11px;
