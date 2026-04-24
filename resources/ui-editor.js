@@ -142,7 +142,7 @@
                 const ws = RED.workspaces.active()
                 if (ws) return ws
                 let id = null
-                RED.nodes.eachWorkspace(w => { if (!id) id = w.id })
+                RED.nodes.eachWorkspace(w => { if (!id) id = typeof w === 'string' ? w : (w && w.id ? w.id : null) })
                 return id
             }
 
@@ -166,6 +166,11 @@
                     showDisconnectNotification: true,
                     allowInstall: false
                 }
+                base._def = RED.nodes.getType('ui-base')
+                if (!base._def) {
+                    RED.notify('Dashboard base node type ui-base is not registered.', 'error')
+                    return base
+                }
                 RED.nodes.add(base)
                 state.activeBaseId = base.id
                 return base
@@ -181,6 +186,11 @@
                     name: 'Default Theme',
                     colors: { surface: '#ffffff', primary: '#0094CE', bgPage: '#eeeeee', groupBg: '#ffffff', groupOutline: '#cccccc' },
                     sizes: { pagePadding: '12px', groupGap: '12px', groupBorderRadius: '4px', widgetGap: '12px' }
+                }
+                theme._def = RED.nodes.getType('ui-theme')
+                if (!theme._def) {
+                    RED.notify('Dashboard theme node type ui-theme is not registered.', 'error')
+                    return theme
                 }
                 RED.nodes.add(theme)
                 return theme
@@ -207,6 +217,11 @@
                     visible: 'true',
                     disabled: 'false'
                 }
+                page._def = RED.nodes.getType('ui-page')
+                if (!page._def) {
+                    RED.notify('Dashboard page node type ui-page is not registered.', 'error')
+                    return page
+                }
                 RED.nodes.add(page)
                 return page
             }
@@ -226,29 +241,76 @@
                     disabled: false,
                     groupType: 'default'
                 }
+                group._def = RED.nodes.getType('ui-group')
+                if (!group._def) {
+                    RED.notify('Dashboard group node type ui-group is not registered.', 'error')
+                    return group
+                }
                 RED.nodes.add(group)
                 return group
             }
 
+            function resolveWidgetType (type) {
+                if (typeof type !== 'string') return type
+                const normalized = type.replace(/-/g, '_')
+                if (RED.nodes && typeof RED.nodes.getType === 'function') {
+                    if (RED.nodes.getType(type)) return type
+                    if (normalized !== type && RED.nodes.getType(normalized)) return normalized
+                }
+                if (RED.nodes && RED.nodes.definitions) {
+                    if (RED.nodes.definitions[type]) return type
+                    if (normalized !== type && RED.nodes.definitions[normalized]) return normalized
+                }
+                if (RED.nodes && RED.nodes.registry && typeof RED.nodes.registry.getType === 'function') {
+                    if (RED.nodes.registry.getType(type)) return type
+                    if (normalized !== type && RED.nodes.registry.getType(normalized)) return normalized
+                }
+                if (RED.nodes && RED.nodes.registry && RED.nodes.registry.types) {
+                    if (RED.nodes.registry.types[type]) return type
+                    if (normalized !== type && RED.nodes.registry.types[normalized]) return normalized
+                }
+                return type
+            }
+
             function createWidget (group, catalog, placementOrder) {
+                if (!group || !group.id) {
+                    RED.notify('Unable to determine target group for widget drop.', 'error')
+                    return null
+                }
+                const resolvedGroup = RED.nodes.node(group.id) || group
                 const flowId = activeFlowId()
                 if (!flowId) {
                     RED.notify('No active flow to drop the widget into.', 'warning')
                     return null
                 }
                 const offsets = widgetSpawnOffset(flowId)
+                const widgetType = resolveWidgetType(catalog.type)
+                if (widgetType !== String(catalog.type)) {
+                    console.debug('Resolved widget node type:', catalog.type, '=>', widgetType)
+                }
                 const node = Object.assign({
                     id: RED.nodes.id(),
-                    type: catalog.type,
+                    type: widgetType,
                     z: flowId,
                     name: '',
-                    group: group.id,
+                    group: resolvedGroup.id,
                     x: offsets.x,
                     y: offsets.y,
                     wires: catalog.category === 'input' || catalog.category === 'logic' ? [[]] : []
                 }, JSON.parse(JSON.stringify(catalog.defaults || {})))
+                node._def = RED.nodes.getType(widgetType)
+                if (!node._def) {
+                    RED.notify(`Widget node type ${widgetType} is not registered.`, 'error')
+                    return null
+                }
                 if (typeof placementOrder === 'number') node.order = placementOrder
-                RED.nodes.add(node)
+                try {
+                    RED.nodes.add(node)
+                } catch (err) {
+                    console.error('Failed to add dashboard widget node:', err, node)
+                    RED.notify(`Could not add widget ${catalog.label}: ${err.message}`, 'error')
+                    return null
+                }
                 return node
             }
 
@@ -295,8 +357,9 @@
                         tile.dataset.widgetType = w.type
                         tile.title = w.type
                         tile.innerHTML = `<i class="fa ${w.icon}"></i><span>${w.label}</span>`
-                        tile.addEventListener('dragstart', ev => {
+                                tile.addEventListener('dragstart', ev => {
                             ev.dataTransfer.setData('application/x-d2-widget', w.type)
+                            ev.dataTransfer.setData('text/plain', w.type)
                             ev.dataTransfer.effectAllowed = 'copy'
                             document.body.classList.add('d2ed-dragging')
                         })
@@ -539,18 +602,25 @@
 
             // -------- drag-drop (palette → group) --------
             function makeDropZone (el, target) {
-                el.addEventListener('dragover', ev => {
-                    if (!ev.dataTransfer.types.includes('application/x-d2-widget')) return
+                el.addEventListener('dragenter', ev => {
                     ev.preventDefault()
+                    ev.stopPropagation()
+                })
+                el.addEventListener('dragover', ev => {
+                    const types = ev.dataTransfer && ev.dataTransfer.types ? Array.from(ev.dataTransfer.types) : []
+                    if (!types.includes('application/x-d2-widget')) return
+                    ev.preventDefault()
+                    ev.stopPropagation()
                     ev.dataTransfer.dropEffect = 'copy'
                     el.classList.add('d2ed-drop-active')
                 })
                 el.addEventListener('dragleave', () => el.classList.remove('d2ed-drop-active'))
                 el.addEventListener('drop', ev => {
-                    el.classList.remove('d2ed-drop-active')
-                    const type = ev.dataTransfer.getData('application/x-d2-widget')
-                    if (!type) return
                     ev.preventDefault()
+                    ev.stopPropagation()
+                    el.classList.remove('d2ed-drop-active')
+                    const type = ev.dataTransfer.getData('application/x-d2-widget') || ev.dataTransfer.getData('text/plain')
+                    if (!type) return
                     handleDrop(type, target)
                 })
             }
@@ -567,8 +637,11 @@
                 const theme = ensureTheme()
 
                 let page = null
-                if (target.page) page = target.page
-                else if (target.group) page = RED.nodes.node(target.group.page)
+                if (target.page) page = RED.nodes.node(target.page.id) || target.page
+                else if (target.group) {
+                    const resolvedGroup = RED.nodes.node(target.group.id) || target.group
+                    page = resolvedGroup && resolvedGroup.page ? RED.nodes.node(resolvedGroup.page) : null
+                }
                 else {
                     const existing = findPages(base.id)
                     page = existing[0] || createPage(base, theme, 'Home')
@@ -577,14 +650,20 @@
                 if (!page) page = createPage(base, theme, 'Home')
                 if (!state.activePageId) state.activePageId = page.id
 
-                let group = target.group
+                let group = target.group && (RED.nodes.node(target.group.id) || target.group)
                 if (!group) {
                     const existing = findGroups(page.id)
                     group = existing[0] || createGroup(page, 'Default')
                 }
 
+                if (!group || !group.id) {
+                    RED.notify('Failed to determine a group for the dropped widget.', 'error')
+                    return
+                }
+
                 const order = findWidgets(group.id).length
-                createWidget(group, cat, order)
+                const node = createWidget(group, cat, order)
+                if (!node) return
                 commit()
                 RED.notify(`Added ${cat.label} to group "${group.name}"`, 'success')
             }
