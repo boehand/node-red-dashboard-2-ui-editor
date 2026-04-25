@@ -17,6 +17,9 @@ const path = require('path')
 const CATALOG_SRC = fs.readFileSync(
     path.join(__dirname, '../resources/widget-catalog.js'), 'utf8'
 )
+const COMPONENTS_SRC = fs.readFileSync(
+    path.join(__dirname, '../resources/widget-components.js'), 'utf8'
+)
 const EDITOR_SRC = fs.readFileSync(
     path.join(__dirname, '../resources/ui-editor.js'), 'utf8'
 )
@@ -32,6 +35,8 @@ const EDITOR_SRC = fs.readFileSync(
  */
 function buildRED (win, nodeStore) {
     const nodes = nodeStore || []
+    const subflows = []
+    const listeners = {}
     let idSeq = 0
 
     const RED = {
@@ -39,6 +44,11 @@ function buildRED (win, nodeStore) {
         _plugin: null,
         // Captured when onadd calls RED.sidebar.addTab
         _tab: null,
+        // Test-friendly accessors
+        _subflows: subflows,
+        _emit: function (name, payload) {
+            (listeners[name] || []).forEach(fn => { try { fn(payload) } catch (e) {} })
+        },
 
         plugins: {
             registerPlugin: function (id, def) {
@@ -48,17 +58,28 @@ function buildRED (win, nodeStore) {
         sidebar: {
             addTab: function (cfg) { RED._tab = cfg }
         },
-        events: { on: function () {} },
+        events: {
+            on: function (name, fn) {
+                if (!listeners[name]) listeners[name] = []
+                listeners[name].push(fn)
+            }
+        },
         notify: function () {},
         nodes: {
             eachConfig: function (cb) { nodes.filter(n => n._cfg).forEach(cb) },
             eachNode: function (cb) { nodes.filter(n => !n._cfg).forEach(cb) },
             eachWorkspace: function () {},
+            eachSubflow: function (cb) { subflows.forEach(cb) },
             id: function () { return 'id-' + (++idSeq) },
             add: function (n) { nodes.push(n) },
+            addSubflow: function (sf) { subflows.push(sf) },
             remove: function (id) {
                 const i = nodes.findIndex(n => n.id === id)
                 if (i >= 0) nodes.splice(i, 1)
+            },
+            removeSubflow: function (id) {
+                const i = subflows.findIndex(sf => sf.id === id)
+                if (i >= 0) subflows.splice(i, 1)
             },
             node: function (id) { return nodes.find(n => n.id === id) || null },
             // Simulate Dashboard 2 node types being registered (returns a truthy stub).
@@ -92,6 +113,10 @@ function boot (nodeStore) {
 
     // 1. Load catalog so window.D2UIEditorCatalog is set
     window.eval(CATALOG_SRC)
+    // 1b. Load the per-widget Vue component registry — the editor uses
+    //     window.D2UIWidgetComponents.has() to recognise widget node types
+    //     when reacting to deletions.
+    window.eval(COMPONENTS_SRC)
 
     // 2. Wire up RED mock
     const RED = buildRED(window, nodeStore || [])
@@ -588,6 +613,153 @@ describe('resources/ui-editor.js', function () {
                 tiles[0].classList.contains('d2ed-widget--drop-before') ||
                 tiles[0].classList.contains('d2ed-widget--drop-after')
             hasIndicator.should.be.true()
+        })
+    })
+
+    // -----------------------------------------------------------------------
+    // Each widget dropped from the palette gets a companion subflow stored in
+    // the "Used Widgets (UI-Editor)" palette category. The subflow itself is
+    // not instantiated on any flow — these tests verify the pairing is created
+    // on drop and torn down on widget deletion.
+    // -----------------------------------------------------------------------
+    describe('palette → group drop creates a paired subflow', function () {
+        function dropPaletteWidget (window, target, widgetType) {
+            const dt = makeDT({
+                'application/x-d2-widget': widgetType,
+                'text/plain': widgetType
+            })
+            target.dispatchEvent(makeDragEvent(window, 'dragenter', dt, 0))
+            target.dispatchEvent(makeDragEvent(window, 'dragover', dt, 0))
+            target.dispatchEvent(makeDragEvent(window, 'drop', dt, 0))
+        }
+
+        it('dropping a button on a group should create one subflow', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-button')
+            RED._subflows.length.should.equal(1)
+        })
+
+        it('the subflow should belong to the "Used Widgets (UI-Editor)" category', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-gauge')
+            RED._subflows[0].category.should.equal('Used Widgets (UI-Editor)')
+        })
+
+        it('the subflow should have type "subflow" and back-reference the widget id via meta', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-switch')
+            const sf = RED._subflows[0]
+            sf.type.should.equal('subflow')
+            const widget = nodes.find(n => n.type === 'ui-switch')
+            should(widget).not.be.null()
+            sf.meta.d2edWidgetId.should.equal(widget.id)
+            sf.meta.d2edWidgetType.should.equal('ui-switch')
+        })
+
+        it('the subflow name should include the widget type label', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-button')
+            RED._subflows[0].name.should.match(/Button/)
+        })
+
+        it('input-category widgets should produce a subflow with one output port', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-button')
+            const sf = RED._subflows[0]
+            sf.in.length.should.equal(0)
+            sf.out.length.should.equal(1)
+        })
+
+        it('output-category widgets should produce a subflow with one input port', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-gauge')
+            const sf = RED._subflows[0]
+            sf.in.length.should.equal(1)
+            sf.out.length.should.equal(0)
+        })
+
+        it('two drops should create two subflows, one per widget', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const groupBody = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody, 'ui-button')
+            // Re-resolve since render() rebuilt the DOM after the first drop
+            const groupBody2 = root.querySelector('.d2ed-group-body')
+            dropPaletteWidget(window, groupBody2, 'ui-slider')
+            RED._subflows.length.should.equal(2)
+            const widgetIds = nodes.filter(n => n.type === 'ui-button' || n.type === 'ui-slider').map(n => n.id)
+            const refs = RED._subflows.map(sf => sf.meta.d2edWidgetId).sort()
+            refs.should.deepEqual(widgetIds.sort())
+        })
+    })
+
+    describe('widget deletion removes the paired subflow', function () {
+        function dropAndGetWidget (root, window, type) {
+            const groupBody = root.querySelector('.d2ed-group-body')
+            const dt = makeDT({
+                'application/x-d2-widget': type,
+                'text/plain': type
+            })
+            groupBody.dispatchEvent(makeDragEvent(window, 'dragenter', dt, 0))
+            groupBody.dispatchEvent(makeDragEvent(window, 'dragover', dt, 0))
+            groupBody.dispatchEvent(makeDragEvent(window, 'drop', dt, 0))
+        }
+
+        it('clicking delete on the widget should also drop its subflow', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropAndGetWidget(root, window, 'ui-button')
+            RED._subflows.length.should.equal(1)
+            // The newly added widget tile has the matching delete button.
+            root.querySelector('.d2ed-widget [data-action="delete"]').click()
+            RED._subflows.length.should.equal(0)
+        })
+
+        it('deleting one of two widgets should only drop that widget\'s subflow', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropAndGetWidget(root, window, 'ui-button')
+            dropAndGetWidget(root, window, 'ui-slider')
+            RED._subflows.length.should.equal(2)
+            const remainingWidget = nodes.find(n => n.type === 'ui-slider')
+            // Delete the button (the first widget tile in document order).
+            const buttonTile = root.querySelector('[data-node-id="' + nodes.find(n => n.type === 'ui-button').id + '"]')
+            buttonTile.querySelector('[data-action="delete"]').click()
+            RED._subflows.length.should.equal(1)
+            RED._subflows[0].meta.d2edWidgetId.should.equal(remainingWidget.id)
+        })
+
+        it('a nodes:remove event for the widget (e.g. canvas delete) should also drop its subflow', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropAndGetWidget(root, window, 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            RED._subflows.length.should.equal(1)
+            // Simulate Node-RED firing nodes:remove from the canvas
+            RED._emit('nodes:remove', widget)
+            RED._subflows.length.should.equal(0)
+        })
+
+        it('deleting a non-widget node (e.g. ui-group) should NOT touch subflows', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropAndGetWidget(root, window, 'ui-button')
+            RED._subflows.length.should.equal(1)
+            const grp = nodes.find(n => n.type === 'ui-group')
+            RED._emit('nodes:remove', grp)
+            RED._subflows.length.should.equal(1)
         })
     })
 })
