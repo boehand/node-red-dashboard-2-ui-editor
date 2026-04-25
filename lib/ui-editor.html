@@ -5,8 +5,13 @@
   Dropping a palette item onto the preview creates the matching Dashboard 2
   node(s) (ui-base / ui-page / ui-group / widget) in the Node-RED flow so the
   canvas stays in sync with the visual layout.
+
+  Vue 3 is loaded so each widget can be rendered through its own component
+  definition (resources/widget-components.js) — no fallback rendering path.
 -->
 
+<script type="text/javascript" src="dashboard-2-ui-editor/vue.js"></script>
 <script type="text/javascript" src="resources/node-red-dashboard-2-ui-editor/widget-catalog.js"></script>
+<script type="text/javascript" src="resources/node-red-dashboard-2-ui-editor/widget-components.js"></script>
 <script type="text/javascript" src="resources/node-red-dashboard-2-ui-editor/ui-editor.js"></script>
 <link rel="stylesheet" href="resources/node-red-dashboard-2-ui-editor/ui-editor.css" />

@@ -957,31 +957,34 @@ body.d2ed-dragging .d2ed-root .d2ed-drop-hint {
     min-height: 16px;
 }
 
-/* ---------- generic fallback ---------- */
-.d2ed-root .d2ed-pw-generic {
+/* ---------- button text/icon ---------- */
+.d2ed-root .d2ed-pw-btn .fa {
+    margin: 0 4px;
+}
+
+.d2ed-root .d2ed-pw-btn-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------- logic-only widgets (ui-control / ui-event) ---------- */
+.d2ed-root .d2ed-pw-logic {
     flex-direction: row;
     align-items: center;
     gap: 6px;
+    color: #555;
+    font-size: 11px;
 }
 
-.d2ed-root .d2ed-pw-generic-icon {
+.d2ed-root .d2ed-pw-logic i {
     flex: 0 0 auto;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
-    background: #0094CE;
-    color: #fff;
+    background: #f0f4f8;
+    color: #0094CE;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 11px;
-}
-
-.d2ed-root .d2ed-pw-generic-label {
-    flex: 1 1 auto;
-    font-size: 11px;
-    color: #333;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
