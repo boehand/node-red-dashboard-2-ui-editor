@@ -14,6 +14,9 @@ function buildRED () {
         plugins: {
             registerPlugin: sinon.stub()
         },
+        httpAdmin: {
+            get: sinon.stub()
+        },
         log: {
             info: sinon.stub()
         }
