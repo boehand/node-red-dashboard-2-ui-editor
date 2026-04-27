@@ -958,5 +958,43 @@ describe('resources/ui-editor.js', function () {
             nodes.some(n => n.type === 'tab' && n.label === 'Used Widgets (UI-Editor)').should.be.true()
             nodes.filter(n => n.type === 'websocket-listener').length.should.equal(2)
         })
+
+        it('canvas-removing one widget keeps the other widget\'s subflow + per-subflow ws-client intact', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-slider')
+            const button = nodes.find(n => n.type === 'ui-button')
+            const slider = nodes.find(n => n.type === 'ui-slider')
+            const sliderSubflow = RED._subflows.find(sf => sf.meta && sf.meta.d2edWidgetId === slider.id)
+            should.exist(sliderSubflow)
+            const sliderInternalIds = sliderSubflow.nodes.map(n => n.id)
+
+            // Canvas-style delete of the button: Node-RED removes it from the
+            // store first, then fires nodes:remove.
+            const btnIdx = nodes.indexOf(button)
+            if (btnIdx >= 0) nodes.splice(btnIdx, 1)
+            RED._emit('nodes:remove', button)
+
+            // Slider subflow must still exist with all of its internal nodes
+            // (incl. its per-subflow websocket-client).
+            RED._subflows.length.should.equal(1)
+            RED._subflows[0].id.should.equal(sliderSubflow.id)
+            sliderInternalIds.forEach(id => {
+                nodes.some(n => n.id === id).should.be.true()
+            })
+            const sliderWsClient = sliderInternalIds
+                .map(id => nodes.find(n => n.id === id))
+                .find(n => n && n.type === 'websocket-client')
+            should.exist(sliderWsClient)
+            sliderWsClient.z.should.equal(sliderSubflow.id)
+
+            // Shared infra is untouched.
+            nodes.filter(n => n.type === 'websocket-client' &&
+                n.path === 'ws://localhost:1880/ws/uieditor/ui-out' && !n.z)
+                .length.should.equal(1)
+            nodes.filter(n => n.type === 'websocket-listener').length.should.equal(2)
+            nodes.some(n => n.type === 'tab' && n.label === 'Used Widgets (UI-Editor)').should.be.true()
+        })
     })
 })
