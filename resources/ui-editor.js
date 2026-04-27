@@ -38,6 +38,16 @@
                         <select class="d2ed-base-select"></select>
                     </div>
                     <div class="d2ed-toolbar-right">
+                        <label class="d2ed-toggle" title="Hide the auto-generated 'Used Widgets (UI-Editor)' category in Node-RED's left palette">
+                            <input type="checkbox" data-action="toggle-hide-subflows">
+                            <span class="d2ed-toggle-track"><span class="d2ed-toggle-thumb"></span></span>
+                            <span class="d2ed-toggle-label">Hide subflows</span>
+                        </label>
+                        <label class="d2ed-toggle" title="Maximise the UI editor over the whole window">
+                            <input type="checkbox" data-action="toggle-fullscreen">
+                            <span class="d2ed-toggle-track"><span class="d2ed-toggle-thumb"></span></span>
+                            <span class="d2ed-toggle-label">Full screen</span>
+                        </label>
                         <button class="d2ed-btn" data-action="add-page" title="Add page">
                             <i class="fa fa-plus"></i> Page
                         </button>
@@ -63,7 +73,18 @@
                         </div>
                     </aside>
                     <main class="d2ed-preview-wrap">
-                        <div class="d2ed-page-tabs"></div>
+                        <div class="d2ed-page-bar">
+                            <div class="d2ed-page-tabs"></div>
+                            <div class="d2ed-layout-selector" hidden>
+                                <label class="d2ed-layout-label">Layout:</label>
+                                <select class="d2ed-layout-select" title="Page layout (ui-page.layout)">
+                                    <option value="grid">Grid</option>
+                                    <option value="flex">Flex</option>
+                                    <option value="notebook">Notebook</option>
+                                    <option value="tabs">Tabs</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="d2ed-preview"></div>
                         <div class="d2ed-empty-state" hidden>
                             <i class="fa fa-th-large"></i>
@@ -138,14 +159,6 @@
             }
 
             // -------- helpers: create nodes --------
-            function activeFlowId () {
-                const ws = RED.workspaces.active()
-                if (ws) return ws
-                let id = null
-                RED.nodes.eachWorkspace(w => { if (!id) id = typeof w === 'string' ? w : (w && w.id ? w.id : null) })
-                return id
-            }
-
             function ensureBase () {
                 let base = findBase()
                 if (base) return base
@@ -304,24 +317,23 @@
                     return null
                 }
                 const resolvedGroup = RED.nodes.node(group.id) || group
-                const flowId = activeFlowId()
-                if (!flowId) {
-                    RED.notify('No active flow to drop the widget into.', 'warning')
-                    return null
-                }
-                const offsets = widgetSpawnOffset(flowId)
                 const widgetType = resolveWidgetType(catalog.type)
                 if (widgetType !== String(catalog.type)) {
                     console.debug('Resolved widget node type:', catalog.type, '=>', widgetType)
                 }
+                // Widgets always live on the dedicated "Used Widgets" tab,
+                // wrapped in a per-widget plumbing group. Their dashboard
+                // membership stays with the original ui-group (`group` field)
+                // so the Dashboard 2 layout is unaffected.
+                const ctx = ensureSharedWebsocketPlumbing()
                 const node = Object.assign({
                     id: RED.nodes.id(),
                     type: widgetType,
-                    z: flowId,
+                    z: ctx.tab.id,
                     name: '',
                     group: resolvedGroup.id,
-                    x: offsets.x,
-                    y: offsets.y,
+                    x: 440,
+                    y: 0,
                     wires: catalog.category === 'input' || catalog.category === 'logic' ? [[]] : []
                 }, JSON.parse(JSON.stringify(catalog.defaults || {})))
                 node._def = RED.nodes.getType(widgetType)
@@ -330,6 +342,12 @@
                     return null
                 }
                 if (typeof placementOrder === 'number') node.order = placementOrder
+
+                // Build the surrounding group + plumbing first; this also
+                // assigns the widget's z/g/x/y/wires so it lines up with the
+                // pre-wired neighbours.
+                const built = buildWidgetGroup(node, catalog, ctx)
+
                 try {
                     RED.nodes.add(node)
                 } catch (err) {
@@ -337,23 +355,232 @@
                     RED.notify(`Could not add widget ${catalog.label}: ${err.message}`, 'error')
                     return null
                 }
+                built.nodes.forEach(n => {
+                    try { RED.nodes.add(n) } catch (e) { console.error('Failed to add plumbing node:', e, n) }
+                })
+                try { RED.nodes.add(built.group) } catch (e) { console.error('Failed to add widget group:', e, built.group) }
+
                 createWidgetSubflow(node, catalog)
                 return node
             }
 
             // -------- per-widget subflow lifecycle --------
-            // Each widget dropped from the palette gets a companion subflow
-            // definition in the "Used Widgets (UI-Editor)" palette category.
-            // The subflow is *not* instantiated on any flow — it sits in the
-            // palette so the user can drag it onto a flow whenever they want
-            // to wire something up to the matching widget. When the widget is
-            // removed (here or from the canvas) the subflow is removed too so
-            // the palette only ever lists subflows for widgets that still
-            // exist.
+            // Each widget dropped from the palette gets two companion artefacts:
+            //   1. A "widget group" on a dedicated flow tab named
+            //      "Used Widgets (UI-Editor)" containing the actual Dashboard 2
+            //      widget node plus the websocket plumbing that lets the widget
+            //      receive updates and emit events through a pair of well-known
+            //      websocket channels.
+            //   2. A subflow stored in the "Used Widgets (UI-Editor)" palette
+            //      category. The subflow contains the inverse plumbing — it
+            //      pushes incoming messages out through ws/uieditor/ui-in and
+            //      receives ws/uieditor/ui-out events filtered by widget id.
+            // The user drags the subflow onto their own flow to interact with
+            // the widget without touching the Used Widgets tab. When the widget
+            // is removed (here or from the canvas) both artefacts are cleaned
+            // up so the palette/tab only ever list widgets that still exist.
             const SUBFLOW_CATEGORY = 'Used Widgets (UI-Editor)'
+            const USED_WIDGETS_TAB_LABEL = 'Used Widgets (UI-Editor)'
+            const WS_UI_IN_PATH = '/ws/uieditor/ui-in'
+            const WS_UI_OUT_PATH = '/ws/uieditor/ui-out'
+            const WS_UI_IN_CLIENT_URL = 'ws://localhost:1880/ws/uieditor/ui-in'
+            const WS_UI_OUT_CLIENT_URL = 'ws://localhost:1880/ws/uieditor/ui-out'
 
             function subflowApiAvailable () {
                 return RED.nodes && typeof RED.nodes.addSubflow === 'function'
+            }
+
+            // -------- shared websocket plumbing --------
+            function findUsedWidgetsTab () {
+                let tab = null
+                if (typeof RED.nodes.eachWorkspace === 'function') {
+                    RED.nodes.eachWorkspace(w => {
+                        if (!tab && w && w.type === 'tab' && w.label === USED_WIDGETS_TAB_LABEL) tab = w
+                    })
+                }
+                if (!tab && typeof RED.nodes.eachConfig === 'function') {
+                    RED.nodes.eachConfig(n => {
+                        if (!tab && n && n.type === 'tab' && n.label === USED_WIDGETS_TAB_LABEL) tab = n
+                    })
+                }
+                return tab
+            }
+
+            function ensureUsedWidgetsTab () {
+                let tab = findUsedWidgetsTab()
+                if (tab) return tab
+                tab = {
+                    _cfg: true,
+                    id: RED.nodes.id(),
+                    type: 'tab',
+                    label: USED_WIDGETS_TAB_LABEL,
+                    disabled: false,
+                    info: '',
+                    env: []
+                }
+                if (RED.workspaces && typeof RED.workspaces.add === 'function') {
+                    RED.workspaces.add(tab)
+                } else if (typeof RED.nodes.add === 'function') {
+                    RED.nodes.add(tab)
+                }
+                return tab
+            }
+
+            function findConfigByPath (type, path) {
+                let found = null
+                if (typeof RED.nodes.eachConfig === 'function') {
+                    RED.nodes.eachConfig(n => {
+                        if (!found && n && n.type === type && n.path === path && !n.z) found = n
+                    })
+                }
+                return found
+            }
+
+            function ensureWebsocketListener (path) {
+                let listener = findConfigByPath('websocket-listener', path)
+                if (listener) return listener
+                listener = {
+                    _cfg: true,
+                    id: RED.nodes.id(),
+                    type: 'websocket-listener',
+                    path: path,
+                    wholemsg: 'true'
+                }
+                listener._def = RED.nodes.getType('websocket-listener')
+                RED.nodes.add(listener)
+                return listener
+            }
+
+            function ensureSharedUiOutClient () {
+                let client = findConfigByPath('websocket-client', WS_UI_OUT_CLIENT_URL)
+                if (client) return client
+                client = {
+                    _cfg: true,
+                    id: RED.nodes.id(),
+                    type: 'websocket-client',
+                    path: WS_UI_OUT_CLIENT_URL,
+                    tls: '',
+                    wholemsg: 'true',
+                    hb: '0',
+                    subprotocol: '',
+                    headers: []
+                }
+                client._def = RED.nodes.getType('websocket-client')
+                RED.nodes.add(client)
+                return client
+            }
+
+            function ensureSharedWebsocketPlumbing () {
+                return {
+                    tab: ensureUsedWidgetsTab(),
+                    uiInListener: ensureWebsocketListener(WS_UI_IN_PATH),
+                    uiOutListener: ensureWebsocketListener(WS_UI_OUT_PATH),
+                    uiOutClient: ensureSharedUiOutClient()
+                }
+            }
+
+            // -------- widget group on the "Used Widgets" tab --------
+            function widgetGroupBaseY (tabId) {
+                let maxY = 40
+                RED.nodes.eachNode(n => {
+                    if (n.z === tabId && typeof n.y === 'number' && n.y > maxY) maxY = n.y
+                })
+                return maxY + 80
+            }
+
+            function buildWidgetGroup (widget, catalog, ctx) {
+                const isInputLike = catalog && (catalog.category === 'input' || catalog.category === 'logic')
+                const baseY = widgetGroupBaseY(ctx.tab.id)
+                const groupName = catalog && catalog.label ? catalog.label : widget.type
+
+                const wsIn = {
+                    id: RED.nodes.id(),
+                    type: 'websocket in',
+                    z: ctx.tab.id,
+                    name: WS_UI_IN_PATH,
+                    server: ctx.uiInListener.id,
+                    client: '',
+                    x: 120,
+                    y: baseY,
+                    wires: [[]]
+                }
+                const filterSwitch = {
+                    id: RED.nodes.id(),
+                    type: 'switch',
+                    z: ctx.tab.id,
+                    name: 'filter widgetid',
+                    property: 'uieditor.widgetid',
+                    propertyType: 'msg',
+                    rules: [{ t: 'eq', v: widget.id, vt: 'str' }],
+                    checkall: 'true',
+                    repair: false,
+                    outputs: 1,
+                    x: 290,
+                    y: baseY,
+                    wires: [[widget.id]]
+                }
+                wsIn.wires = [[filterSwitch.id]]
+
+                const groupNodeIds = [widget.id, wsIn.id, filterSwitch.id]
+                const extraNodes = [wsIn, filterSwitch]
+                let cleanFn = null
+                let wsOut = null
+
+                if (isInputLike) {
+                    cleanFn = {
+                        id: RED.nodes.id(),
+                        type: 'function',
+                        z: ctx.tab.id,
+                        name: 'clean up msg & set widgetid',
+                        func: 'const newMsg = {\n    topic: msg.topic,\n    payload: msg.payload,\n    ui_update: msg.ui_update,\n    uieditor: { widgetid: ' + JSON.stringify(widget.id) + ' }\n};\nreturn newMsg;\n',
+                        outputs: 1,
+                        timeout: 0,
+                        noerr: 0,
+                        initialize: '',
+                        finalize: '',
+                        libs: [],
+                        x: 660,
+                        y: baseY,
+                        wires: [[]]
+                    }
+                    wsOut = {
+                        id: RED.nodes.id(),
+                        type: 'websocket out',
+                        z: ctx.tab.id,
+                        name: '',
+                        server: '',
+                        client: ctx.uiOutClient.id,
+                        x: 1000,
+                        y: baseY,
+                        wires: []
+                    }
+                    cleanFn.wires = [[wsOut.id]]
+                    extraNodes.push(cleanFn, wsOut)
+                    groupNodeIds.push(cleanFn.id, wsOut.id)
+                }
+
+                const group = {
+                    id: RED.nodes.id(),
+                    type: 'group',
+                    z: ctx.tab.id,
+                    name: groupName,
+                    style: { label: true },
+                    nodes: groupNodeIds,
+                    x: 14,
+                    y: baseY - 41,
+                    w: isInputLike ? 1172 : 492,
+                    h: 82
+                }
+
+                widget.z = ctx.tab.id
+                widget.g = group.id
+                widget.x = 440
+                widget.y = baseY
+                widget.wires = isInputLike ? [[cleanFn.id]] : []
+
+                extraNodes.forEach(n => { n.g = group.id })
+
+                return { group, nodes: extraNodes }
             }
 
             function buildSubflowFor (widget, catalog) {
@@ -361,8 +588,96 @@
                 const widgetLabel = widget.name || widget.label || widget.title || ''
                 const displayName = widgetLabel ? labelBase + ': ' + widgetLabel : labelBase
                 const isInputLike = catalog && (catalog.category === 'input' || catalog.category === 'logic')
-                return {
+
+                const subflowId = RED.nodes.id()
+                const uiOutListener = ensureWebsocketListener(WS_UI_OUT_PATH)
+
+                const uiInClient = {
+                    _cfg: true,
                     id: RED.nodes.id(),
+                    type: 'websocket-client',
+                    z: subflowId,
+                    path: WS_UI_IN_CLIENT_URL,
+                    tls: '',
+                    wholemsg: 'true',
+                    hb: '0',
+                    subprotocol: '',
+                    headers: []
+                }
+
+                const wsOut = {
+                    id: RED.nodes.id(),
+                    type: 'websocket out',
+                    z: subflowId,
+                    name: 'ws/uieditor/ui-in',
+                    server: '',
+                    client: uiInClient.id,
+                    x: 360,
+                    y: 100,
+                    wires: []
+                }
+
+                const setWidgetId = {
+                    id: RED.nodes.id(),
+                    type: 'change',
+                    z: subflowId,
+                    name: 'set widgetid',
+                    rules: [{
+                        t: 'set',
+                        p: 'uieditor',
+                        pt: 'msg',
+                        to: '{"widgetid": $env("widgetid")}',
+                        tot: 'jsonata'
+                    }],
+                    action: '',
+                    property: '',
+                    from: '',
+                    to: '',
+                    reg: false,
+                    x: 170,
+                    y: 100,
+                    wires: [[wsOut.id]]
+                }
+
+                const internalNodes = [setWidgetId, wsOut, uiInClient]
+                let filterSwitch = null
+
+                if (isInputLike) {
+                    const wsIn = {
+                        id: RED.nodes.id(),
+                        type: 'websocket in',
+                        z: subflowId,
+                        name: 'ws/uieditor/ui-out',
+                        server: uiOutListener.id,
+                        client: '',
+                        x: 580,
+                        y: 100,
+                        wires: [[]]
+                    }
+                    filterSwitch = {
+                        id: RED.nodes.id(),
+                        type: 'switch',
+                        z: subflowId,
+                        name: 'filter widgetid',
+                        property: 'uieditor.widgetid',
+                        propertyType: 'msg',
+                        rules: [{ t: 'eq', v: 'widgetid', vt: 'env' }],
+                        checkall: 'true',
+                        repair: false,
+                        outputs: 1,
+                        x: 770,
+                        y: 100,
+                        wires: [[]]
+                    }
+                    wsIn.wires = [[filterSwitch.id]]
+                    internalNodes.push(wsIn, filterSwitch)
+                }
+
+                const iconAttr = catalog && catalog.icon ? catalog.icon : 'fa-square'
+                const iconWithPrefix = iconAttr.indexOf('/') >= 0 ? iconAttr : ('font-awesome/' + iconAttr)
+
+                return {
+                    id: subflowId,
                     type: 'subflow',
                     name: displayName,
                     info: 'Auto-generated by the Dashboard 2 UI Editor for widget `' +
@@ -370,15 +685,21 @@
                           'Drag this subflow onto a flow to wire it to the widget. ' +
                           'It will be removed automatically when the widget is deleted.',
                     category: SUBFLOW_CATEGORY,
-                    in: isInputLike ? [] : [{ x: 60, y: 30, wires: [] }],
-                    out: isInputLike ? [{ x: 240, y: 30, wires: [] }] : [],
-                    env: [],
-                    color: '#0094CE',
-                    icon: 'node-red/' + (isInputLike ? 'arrow-out.svg' : 'arrow-in.svg'),
+                    in: [{ x: 40, y: 100, wires: [{ id: setWidgetId.id }] }],
+                    out: isInputLike ? [{ x: 900, y: 100, wires: [{ id: filterSwitch.id, port: 0 }] }] : [],
+                    env: [{
+                        name: 'widgetid',
+                        type: 'str',
+                        value: widget.id,
+                        ui: { type: 'hide' }
+                    }],
+                    color: '#A0E6EC',
+                    icon: iconWithPrefix,
                     meta: {
                         d2edWidgetId: widget.id,
                         d2edWidgetType: widget.type
-                    }
+                    },
+                    nodes: internalNodes
                 }
             }
 
@@ -392,6 +713,11 @@
                     console.error('Failed to add widget subflow:', err, subflow)
                     return null
                 }
+                if (Array.isArray(subflow.nodes)) {
+                    subflow.nodes.forEach(n => {
+                        try { RED.nodes.add(n) } catch (e) { /* ignore */ }
+                    })
+                }
                 return subflow
             }
 
@@ -404,35 +730,56 @@
                 return found
             }
 
-            function removeWidgetSubflow (widgetId) {
-                const sf = findWidgetSubflow(widgetId)
-                if (!sf) return false
-                try {
-                    if (typeof RED.nodes.removeSubflow === 'function') {
-                        RED.nodes.removeSubflow(sf.id)
-                    } else if (typeof RED.nodes.remove === 'function') {
-                        RED.nodes.remove(sf.id)
+            function findWidgetGroup (widgetId) {
+                let found = null
+                RED.nodes.eachNode(n => {
+                    if (!found && n && n.type === 'group' && Array.isArray(n.nodes) && n.nodes.indexOf(widgetId) >= 0) {
+                        found = n
                     }
-                } catch (err) {
-                    console.error('Failed to remove widget subflow:', err, sf)
-                    return false
+                })
+                return found
+            }
+
+            function removeWidgetArtifacts (widgetId) {
+                const sf = findWidgetSubflow(widgetId)
+                let removedAny = false
+                if (sf) {
+                    if (Array.isArray(sf.nodes)) {
+                        sf.nodes.forEach(n => {
+                            try { RED.nodes.remove(n.id) } catch (e) { /* ignore */ }
+                        })
+                    }
+                    try {
+                        if (typeof RED.nodes.removeSubflow === 'function') {
+                            RED.nodes.removeSubflow(sf.id)
+                        } else if (typeof RED.nodes.remove === 'function') {
+                            RED.nodes.remove(sf.id)
+                        }
+                        removedAny = true
+                    } catch (err) {
+                        console.error('Failed to remove widget subflow:', err, sf)
+                    }
                 }
-                return true
+                const group = findWidgetGroup(widgetId)
+                if (group) {
+                    const memberIds = (group.nodes || []).slice()
+                    memberIds.forEach(id => {
+                        if (id === widgetId) return
+                        try { RED.nodes.remove(id) } catch (e) { /* ignore */ }
+                    })
+                    try { RED.nodes.remove(group.id); removedAny = true } catch (e) { /* ignore */ }
+                }
+                return removedAny
+            }
+
+            // Backwards-compatible alias for callers / tests that referenced the
+            // old name. Removes the subflow plus the on-canvas plumbing group.
+            function removeWidgetSubflow (widgetId) {
+                return removeWidgetArtifacts(widgetId)
             }
 
             function isWidgetNodeType (type) {
                 return !!(window.D2UIWidgetComponents && window.D2UIWidgetComponents.has(type))
-            }
-
-            function widgetSpawnOffset (flowId) {
-                let maxX = 120, maxY = 60
-                RED.nodes.eachNode(n => {
-                    if (n.z === flowId && typeof n.x === 'number' && typeof n.y === 'number') {
-                        if (n.y > maxY) maxY = n.y
-                        if (n.x > maxX) maxX = n.x
-                    }
-                })
-                return { x: 220, y: maxY + 60 }
             }
 
             function commit (historyEntries) {
@@ -573,8 +920,23 @@
                 const page = pages.find(p => p.id === state.activePageId) || pages[0]
                 const groups = findGroups(page.id)
 
+                // Reflect the current layout in the toolbar dropdown so the
+                // user can switch the ui-page.layout property visually.
+                const layout = page.layout || 'grid'
+                layoutSelectorEl.hidden = false
+                layoutSelectEl.value = ['grid', 'flex', 'notebook', 'tabs'].indexOf(layout) >= 0 ? layout : 'grid'
+
                 const pageGrid = document.createElement('div')
-                pageGrid.className = 'd2ed-page'
+                pageGrid.className = 'd2ed-page d2ed-page--' + (layoutSelectEl.value)
+
+                // Total column count comes from the page's largest breakpoint;
+                // groups span their `width` cols inside that grid (matching the
+                // Dashboard 2 deployed view, where groups sit side-by-side).
+                const breakpoints = Array.isArray(page.breakpoints) ? page.breakpoints : []
+                const totalCols = breakpoints.length
+                    ? Math.max.apply(null, breakpoints.map(b => Number(b.cols) || 0))
+                    : 12
+                pageGrid.style.setProperty('--page-cols', String(totalCols || 12))
 
                 if (!groups.length) {
                     const hint = document.createElement('div')
@@ -583,16 +945,23 @@
                     makeDropZone(hint, { page })
                     pageGrid.appendChild(hint)
                 } else {
-                    groups.forEach(g => pageGrid.appendChild(renderGroup(g)))
+                    groups.forEach(g => pageGrid.appendChild(renderGroup(g, totalCols)))
                 }
                 previewEl.appendChild(pageGrid)
             }
 
-            function renderGroup (group) {
+            function renderGroup (group, pageCols) {
                 const widgets = findWidgets(group.id)
+                const groupCols = group.width || 6
                 const el = document.createElement('section')
                 el.className = 'd2ed-group'
-                el.style.setProperty('--group-cols', String(group.width || 6))
+                el.style.setProperty('--group-cols', String(groupCols))
+                // Spans on the parent grid let groups sit side-by-side and
+                // wrap once the row's column budget is exhausted, matching
+                // Dashboard 2's deployed grid layout.
+                if (pageCols) {
+                    el.style.gridColumn = 'span ' + Math.min(groupCols, pageCols)
+                }
                 el.dataset.groupId = group.id
 
                 const head = document.createElement('header')
@@ -885,6 +1254,67 @@
                 commit()
             })
             root.querySelector('[data-action="refresh"]').addEventListener('click', () => render())
+
+            // -------- toolbar toggles --------
+            // Stylesheet element used to inject one-off rules (e.g. hide our
+            // subflow palette section in the Node-RED canvas).
+            const toggleStyleEl = document.createElement('style')
+            toggleStyleEl.id = 'd2ed-toggle-styles'
+            document.head.appendChild(toggleStyleEl)
+
+            const hideSubflowsToggle = root.querySelector('[data-action="toggle-hide-subflows"]')
+            const fullscreenToggle = root.querySelector('[data-action="toggle-fullscreen"]')
+
+            // The Node-RED palette renders each subflow category as a header
+            // followed by its node tiles. Categories carry their label as a
+            // data-attribute on the toggle header (`data-cat`) and on the
+            // palette node entries (`palette-header-Used Widgets (UI-Editor)`
+            // / `red-ui-palette-header-collapse-Used Widgets (UI-Editor)`).
+            // We hide every element whose category attribute references our
+            // generated category — works regardless of the user's collapse
+            // state.
+            function applyHideSubflowsState () {
+                if (hideSubflowsToggle.checked) {
+                    toggleStyleEl.textContent =
+                        // Category header + node tiles in the main palette.
+                        '#palette-container .palette-category[data-category="subflow:' + SUBFLOW_CATEGORY + '"],' +
+                        '#palette-container [id^="palette_node_subflow:' + SUBFLOW_CATEGORY + '"],' +
+                        // Subflow type entries listed under "subflow" category
+                        // when Node-RED uses the legacy DOM layout.
+                        '#palette-container [data-palette-type^="subflow:"][data-palette-label*="' + SUBFLOW_CATEGORY + '"]' +
+                        ' { display: none !important; }'
+                } else {
+                    toggleStyleEl.textContent = ''
+                }
+            }
+            hideSubflowsToggle.addEventListener('change', applyHideSubflowsState)
+
+            // Fullscreen mode: pin the editor root over the entire viewport
+            // so neither the Node-RED palette nor the flow canvas is visible.
+            // Also hides Node-RED's own header so the editor truly fills the
+            // window. A class on <body> drives both pieces from CSS.
+            function applyFullscreenState () {
+                if (fullscreenToggle.checked) {
+                    document.body.classList.add('d2ed-fullscreen')
+                } else {
+                    document.body.classList.remove('d2ed-fullscreen')
+                }
+            }
+            fullscreenToggle.addEventListener('change', applyFullscreenState)
+
+            // -------- page layout selector --------
+            const layoutSelectorEl = root.querySelector('.d2ed-layout-selector')
+            const layoutSelectEl = root.querySelector('.d2ed-layout-select')
+            layoutSelectEl.addEventListener('change', () => {
+                const base = findBase()
+                if (!base) return
+                const pages = findPages(base.id)
+                const page = pages.find(p => p.id === state.activePageId) || pages[0]
+                if (!page) return
+                page.layout = layoutSelectEl.value
+                if (page._def) RED.nodes.dirty(true)
+                render()
+            })
 
             // -------- flow → preview sync --------
             RED.events.on('nodes:add', render)
