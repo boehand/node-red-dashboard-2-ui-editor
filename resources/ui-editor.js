@@ -159,9 +159,21 @@
             }
 
             // -------- helpers: create nodes --------
+            // Node-RED's RED.nodes.add maintains a `users` back-reference on
+            // every config node so it can track which downstream nodes refer
+            // to it. When we hand-roll a config node (or look one up that
+            // came from an older session) the array may be missing — and the
+            // first downstream `add` call then throws on `users.indexOf(...)`
+            // inside Node-RED. Calling this whenever we touch a config node
+            // backfills the array so the next add succeeds.
+            function ensureUsersArray (n) {
+                if (n && !Array.isArray(n.users)) n.users = []
+                return n
+            }
+
             function ensureBase () {
                 let base = findBase()
-                if (base) return base
+                if (base) return ensureUsersArray(base)
                 base = {
                     id: RED.nodes.id(),
                     type: 'ui-base',
@@ -177,7 +189,8 @@
                     showReconnectNotification: true,
                     notificationDisplayTime: 1,
                     showDisconnectNotification: true,
-                    allowInstall: false
+                    allowInstall: false,
+                    users: []
                 }
                 base._def = RED.nodes.getType('ui-base')
                 if (!base._def) {
@@ -192,13 +205,14 @@
             function ensureTheme () {
                 let theme = null
                 RED.nodes.eachConfig(n => { if (!theme && n.type === 'ui-theme') theme = n })
-                if (theme) return theme
+                if (theme) return ensureUsersArray(theme)
                 theme = {
                     id: RED.nodes.id(),
                     type: 'ui-theme',
                     name: 'Default Theme',
                     colors: { surface: '#ffffff', primary: '#0094CE', bgPage: '#eeeeee', groupBg: '#ffffff', groupOutline: '#cccccc' },
-                    sizes: { pagePadding: '12px', groupGap: '12px', groupBorderRadius: '4px', widgetGap: '12px' }
+                    sizes: { pagePadding: '12px', groupGap: '12px', groupBorderRadius: '4px', widgetGap: '12px' },
+                    users: []
                 }
                 theme._def = RED.nodes.getType('ui-theme')
                 if (!theme._def) {
@@ -210,6 +224,8 @@
             }
 
             function createPage (base, theme, name) {
+                ensureUsersArray(base)
+                ensureUsersArray(theme)
                 const page = {
                     id: RED.nodes.id(),
                     type: 'ui-page',
@@ -228,7 +244,8 @@
                     order: -1,
                     className: '',
                     visible: 'true',
-                    disabled: 'false'
+                    disabled: 'false',
+                    users: []
                 }
                 page._def = RED.nodes.getType('ui-page')
                 if (!page._def) {
@@ -240,6 +257,7 @@
             }
 
             function createGroup (page, name) {
+                ensureUsersArray(page)
                 const group = {
                     id: RED.nodes.id(),
                     type: 'ui-group',
@@ -252,7 +270,8 @@
                     className: '',
                     visible: true,
                     disabled: false,
-                    groupType: 'default'
+                    groupType: 'default',
+                    users: []
                 }
                 group._def = RED.nodes.getType('ui-group')
                 if (!group._def) {
@@ -316,7 +335,7 @@
                     RED.notify('Unable to determine target group for widget drop.', 'error')
                     return null
                 }
-                const resolvedGroup = RED.nodes.node(group.id) || group
+                const resolvedGroup = ensureUsersArray(RED.nodes.node(group.id) || group)
                 const widgetType = resolveWidgetType(catalog.type)
                 if (widgetType !== String(catalog.type)) {
                     console.debug('Resolved widget node type:', catalog.type, '=>', widgetType)
@@ -438,13 +457,14 @@
 
             function ensureWebsocketListener (path) {
                 let listener = findConfigByPath('websocket-listener', path)
-                if (listener) return listener
+                if (listener) return ensureUsersArray(listener)
                 listener = {
                     _cfg: true,
                     id: RED.nodes.id(),
                     type: 'websocket-listener',
                     path: path,
-                    wholemsg: 'true'
+                    wholemsg: 'true',
+                    users: []
                 }
                 listener._def = RED.nodes.getType('websocket-listener')
                 RED.nodes.add(listener)
@@ -453,7 +473,7 @@
 
             function ensureSharedUiOutClient () {
                 let client = findConfigByPath('websocket-client', WS_UI_OUT_CLIENT_URL)
-                if (client) return client
+                if (client) return ensureUsersArray(client)
                 client = {
                     _cfg: true,
                     id: RED.nodes.id(),
@@ -463,7 +483,8 @@
                     wholemsg: 'true',
                     hb: '0',
                     subprotocol: '',
-                    headers: []
+                    headers: [],
+                    users: []
                 }
                 client._def = RED.nodes.getType('websocket-client')
                 RED.nodes.add(client)
@@ -602,7 +623,8 @@
                     wholemsg: 'true',
                     hb: '0',
                     subprotocol: '',
-                    headers: []
+                    headers: [],
+                    users: []
                 }
 
                 const wsOut = {
