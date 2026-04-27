@@ -959,4 +959,301 @@ describe('resources/ui-editor.js', function () {
             nodes.filter(n => n.type === 'websocket-listener').length.should.equal(2)
         })
     })
+
+    // -----------------------------------------------------------------------
+    // Deep-dive coverage of subflow internals: wiring, JSONata, config
+    // references, function body shape, regression tests for the users:[]
+    // fix. These tests inspect the generated Node-RED objects directly so a
+    // future refactor can't silently break the bridge between the deployed
+    // widget and the user-facing subflow.
+    // -----------------------------------------------------------------------
+    describe('subflow internals — wiring, configs, regressions', function () {
+        function dropPaletteWidget (window, target, widgetType) {
+            const dt = makeDT({
+                'application/x-d2-widget': widgetType,
+                'text/plain': widgetType
+            })
+            target.dispatchEvent(makeDragEvent(window, 'dragenter', dt, 0))
+            target.dispatchEvent(makeDragEvent(window, 'dragover', dt, 0))
+            target.dispatchEvent(makeDragEvent(window, 'drop', dt, 0))
+        }
+
+        function dropAndCollect (nodes, root, window, RED, type) {
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), type)
+            const widget = nodes.find(n => n.type === type)
+            const sf = RED._subflows.find(s => s.meta && s.meta.d2edWidgetId === widget.id)
+            const sfNodes = Array.from(sf.nodes)
+            return {
+                widget,
+                sf,
+                sfNodes,
+                ch: sfNodes.find(n => n.type === 'change'),
+                wsOut: sfNodes.find(n => n.type === 'websocket out'),
+                wsIn: sfNodes.find(n => n.type === 'websocket in'),
+                sw: sfNodes.find(n => n.type === 'switch'),
+                cli: sfNodes.find(n => n.type === 'websocket-client')
+            }
+        }
+
+        // ----- subflow port wiring -----
+        it('subflow input port wires to the change "set widgetid" node', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { sf, ch } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            sf.in[0].wires.length.should.equal(1)
+            sf.in[0].wires[0].id.should.equal(ch.id)
+        })
+
+        it('subflow output port wires to the filter switch (port 0)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { sf, sw } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            sf.out[0].wires.length.should.equal(1)
+            sf.out[0].wires[0].id.should.equal(sw.id)
+            sf.out[0].wires[0].port.should.equal(0)
+        })
+
+        it('change "set widgetid" wires forward to the websocket-out node', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { ch, wsOut } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            ch.wires.length.should.equal(1)
+            ch.wires[0].length.should.equal(1)
+            ch.wires[0][0].should.equal(wsOut.id)
+        })
+
+        it('subflow websocket-in wires forward to the filter switch', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { wsIn, sw } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            wsIn.wires.length.should.equal(1)
+            wsIn.wires[0].length.should.equal(1)
+            wsIn.wires[0][0].should.equal(sw.id)
+        })
+
+        // ----- subflow node config details -----
+        it('change "set widgetid" sets msg.uieditor via JSONata referencing $env("widgetid")', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { ch } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            ch.name.should.equal('set widgetid')
+            ch.rules.length.should.equal(1)
+            ch.rules[0].t.should.equal('set')
+            ch.rules[0].p.should.equal('uieditor')
+            ch.rules[0].pt.should.equal('msg')
+            ch.rules[0].tot.should.equal('jsonata')
+            ch.rules[0].to.should.containEql('$env("widgetid")')
+            ch.rules[0].to.should.containEql('widgetid')
+        })
+
+        it('subflow filter switch reads msg.uieditor.widgetid', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { sw } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            sw.property.should.equal('uieditor.widgetid')
+            sw.propertyType.should.equal('msg')
+            sw.outputs.should.equal(1)
+            sw.rules.length.should.equal(1)
+            sw.rules[0].t.should.equal('eq')
+        })
+
+        // ----- shared / per-subflow client + listener references -----
+        it('subflow websocket-out points at the subflow-scoped websocket-client (not the shared ui-out one)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { sf, wsOut, cli } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            wsOut.client.should.equal(cli.id)
+            cli.z.should.equal(sf.id)
+            cli.path.should.equal('ws://localhost:1880/ws/uieditor/ui-in')
+            should(wsOut.server).equal('')
+        })
+
+        it('subflow websocket-in references the shared ui-out listener (not a private one)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { wsIn } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            const sharedOutListener = nodes.find(n => n.type === 'websocket-listener' && n.path === '/ws/uieditor/ui-out')
+            should(sharedOutListener).not.be.undefined()
+            wsIn.server.should.equal(sharedOutListener.id)
+            should(wsIn.client).equal('')
+        })
+
+        it('two input-widget subflows share the same ui-out listener id', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const a = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            const b = dropAndCollect(nodes, root, window, RED, 'ui-slider')
+            a.wsIn.server.should.equal(b.wsIn.server)
+            // …but their per-subflow ui-in clients are distinct.
+            a.cli.id.should.not.equal(b.cli.id)
+        })
+
+        it('every subflow node has z = subflow.id', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { sf, sfNodes } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            sfNodes.forEach(n => n.z.should.equal(sf.id))
+        })
+
+        // ----- subflow visual metadata -----
+        it('subflow uses the dashboard-2 colour and font-awesome icon', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            const { sf } = dropAndCollect(nodes, root, window, RED, 'ui-button')
+            sf.color.should.equal('#A0E6EC')
+            sf.icon.should.match(/^font-awesome\//)
+        })
+
+        // ----- widget-group plumbing wiring on the Used Widgets tab -----
+        it('widget group wiring: ws-in → switch → widget → function → ws-out (input widget)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const groupId = widget.g
+            const wsIn = nodes.find(n => n.type === 'websocket in' && n.g === groupId)
+            const sw = nodes.find(n => n.type === 'switch' && n.g === groupId)
+            const fn = nodes.find(n => n.type === 'function' && n.g === groupId)
+            const wsOut = nodes.find(n => n.type === 'websocket out' && n.g === groupId)
+            // ws-in → switch
+            wsIn.wires[0][0].should.equal(sw.id)
+            // switch → widget
+            sw.wires[0][0].should.equal(widget.id)
+            // widget → function
+            widget.wires[0][0].should.equal(fn.id)
+            // function → ws-out
+            fn.wires[0][0].should.equal(wsOut.id)
+        })
+
+        it('widget-group websocket-in references the shared ui-in listener', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const wsIn = nodes.find(n => n.type === 'websocket in' && n.g === widget.g)
+            const sharedInListener = nodes.find(n => n.type === 'websocket-listener' && n.path === '/ws/uieditor/ui-in')
+            should(sharedInListener).not.be.undefined()
+            wsIn.server.should.equal(sharedInListener.id)
+        })
+
+        it('widget-group websocket-out references the shared ui-out client', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const wsOut = nodes.find(n => n.type === 'websocket out' && n.g === widget.g)
+            const sharedOutClient = nodes.find(n =>
+                n.type === 'websocket-client' &&
+                n.path === 'ws://localhost:1880/ws/uieditor/ui-out' && !n.z)
+            should(sharedOutClient).not.be.undefined()
+            wsOut.client.should.equal(sharedOutClient.id)
+        })
+
+        it('widget-group function returns msg with topic, payload, ui_update and uieditor.widgetid', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const fn = nodes.find(n => n.type === 'function' && n.g === widget.g)
+            fn.outputs.should.equal(1)
+            fn.func.should.containEql('msg.topic')
+            fn.func.should.containEql('msg.payload')
+            fn.func.should.containEql('msg.ui_update')
+            fn.func.should.containEql('uieditor')
+            fn.func.should.containEql('widgetid')
+            fn.func.should.containEql(widget.id)
+            fn.func.should.containEql('return newMsg')
+        })
+
+        it('widget group "nodes" array enumerates every plumbing member (incl. the widget)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const group = nodes.find(n => n.type === 'group' && n.id === widget.g)
+            const expectedTypes = ['ui-button', 'websocket in', 'switch', 'function', 'websocket out']
+            const memberTypes = group.nodes.map(id => nodes.find(n => n.id === id)).map(n => n && n.type)
+            expectedTypes.forEach(t => should(memberTypes).containEql(t))
+        })
+
+        // ----- regression: users:[] init + ensureUsersArray backfill -----
+        // The recent fix initialises `users:[]` on every config node we
+        // create (and backfills it on existing ones we look up) so that
+        // Node-RED's RED.nodes.add can push into it without throwing
+        // "Cannot read properties of undefined (reading 'indexOf')".
+        it('newly created ui-base/ui-theme have a users array', function () {
+            const nodes = []
+            const { root, window } = boot(nodes)
+            // Drop a widget to force ensureBase + ensureTheme to fire.
+            dropPaletteWidget(window, root.querySelector('.d2ed-empty-state, .d2ed-group-body, .d2ed-page-empty'), 'ui-button')
+            const base = nodes.find(n => n.type === 'ui-base')
+            const theme = nodes.find(n => n.type === 'ui-theme')
+            should(base).not.be.undefined()
+            should(theme).not.be.undefined()
+            Array.isArray(base.users).should.be.true()
+            Array.isArray(theme.users).should.be.true()
+        })
+
+        it('newly created ui-page and ui-group have a users array', function () {
+            const nodes = oneBase()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-empty-state, .d2ed-page-empty'), 'ui-button')
+            const page = nodes.find(n => n.type === 'ui-page')
+            const grp = nodes.find(n => n.type === 'ui-group')
+            should(page).not.be.undefined()
+            should(grp).not.be.undefined()
+            Array.isArray(page.users).should.be.true()
+            Array.isArray(grp.users).should.be.true()
+        })
+
+        it('existing config nodes without a users array get one backfilled before the next add', function () {
+            // Simulate a session that pre-dates the fix: base + theme exist
+            // but neither has a users array. The next widget drop must NOT
+            // throw and must end up with users:[] on every referenced config.
+            const nodes = [
+                { _cfg: true, id: 'base1', type: 'ui-base', name: 'My Dashboard' },
+                { _cfg: true, id: 'theme1', type: 'ui-theme', name: 'Default Theme' },
+                { _cfg: true, id: 'page1', type: 'ui-page', name: 'Home', ui: 'base1', theme: 'theme1', order: 0, icon: 'home' },
+                { _cfg: true, id: 'grp1', type: 'ui-group', name: 'Controls', page: 'page1', width: 6, order: 0 }
+            ]
+            const { root, window } = boot(nodes);
+            (function () {
+                dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            }).should.not.throw()
+            Array.isArray(nodes.find(n => n.id === 'base1').users).should.be.true()
+            Array.isArray(nodes.find(n => n.id === 'theme1').users).should.be.true()
+            Array.isArray(nodes.find(n => n.id === 'grp1').users).should.be.true()
+        })
+
+        it('newly created websocket-listener / websocket-client config nodes have a users array', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const listeners = nodes.filter(n => n.type === 'websocket-listener')
+            const clients = nodes.filter(n => n.type === 'websocket-client')
+            listeners.length.should.be.greaterThan(0)
+            clients.length.should.be.greaterThan(0)
+            listeners.forEach(l => Array.isArray(l.users).should.be.true())
+            clients.forEach(c => Array.isArray(c.users).should.be.true())
+        })
+
+        // ----- end-to-end deletion completeness -----
+        it('deleting a widget removes its subflow internals AND the per-subflow websocket-client', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const sfBefore = RED._subflows[0]
+            const sfNodeIds = Array.from(sfBefore.nodes).map(n => n.id)
+            // The internal nodes were registered via RED.nodes.add → present.
+            sfNodeIds.forEach(id => nodes.some(n => n.id === id).should.be.true())
+            // Now delete the widget canvas-style.
+            const idx = nodes.indexOf(widget)
+            if (idx >= 0) nodes.splice(idx, 1)
+            RED._emit('nodes:remove', widget)
+            // Subflow + every internal node is gone.
+            RED._subflows.length.should.equal(0)
+            sfNodeIds.forEach(id => nodes.some(n => n.id === id).should.be.false())
+        })
+    })
 })
