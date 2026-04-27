@@ -670,17 +670,17 @@ describe('resources/ui-editor.js', function () {
             RED._subflows[0].name.should.match(/Button/)
         })
 
-        it('input-category widgets should produce a subflow with one output port', function () {
+        it('input-category widgets should produce a subflow with one input and one output port', function () {
             const nodes = onePageOneGroup()
             const { root, window, RED } = boot(nodes)
             const groupBody = root.querySelector('.d2ed-group-body')
             dropPaletteWidget(window, groupBody, 'ui-button')
             const sf = RED._subflows[0]
-            sf.in.length.should.equal(0)
+            sf.in.length.should.equal(1)
             sf.out.length.should.equal(1)
         })
 
-        it('output-category widgets should produce a subflow with one input port', function () {
+        it('output-category widgets should produce a subflow with one input port and no output', function () {
             const nodes = onePageOneGroup()
             const { root, window, RED } = boot(nodes)
             const groupBody = root.querySelector('.d2ed-group-body')
@@ -760,6 +760,203 @@ describe('resources/ui-editor.js', function () {
             const grp = nodes.find(n => n.type === 'ui-group')
             RED._emit('nodes:remove', grp)
             RED._subflows.length.should.equal(1)
+        })
+    })
+
+    // -----------------------------------------------------------------------
+    // Each widget gets a fully-wired subflow plus a companion plumbing group
+    // on the dedicated "Used Widgets (UI-Editor)" tab. These tests verify that
+    // the websocket bridge between subflow and widget is generated correctly.
+    // -----------------------------------------------------------------------
+    describe('subflow + widget group plumbing', function () {
+        function dropPaletteWidget (window, target, widgetType) {
+            const dt = makeDT({
+                'application/x-d2-widget': widgetType,
+                'text/plain': widgetType
+            })
+            target.dispatchEvent(makeDragEvent(window, 'dragenter', dt, 0))
+            target.dispatchEvent(makeDragEvent(window, 'dragover', dt, 0))
+            target.dispatchEvent(makeDragEvent(window, 'drop', dt, 0))
+        }
+
+        it('first widget creates the "Used Widgets (UI-Editor)" tab', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const tab = nodes.find(n => n.type === 'tab' && n.label === 'Used Widgets (UI-Editor)')
+            should(tab).not.be.null()
+            should(tab).not.be.undefined()
+        })
+
+        it('second widget reuses the existing "Used Widgets (UI-Editor)" tab', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-slider')
+            const tabs = nodes.filter(n => n.type === 'tab' && n.label === 'Used Widgets (UI-Editor)')
+            tabs.length.should.equal(1)
+        })
+
+        it('shared websocket-listener configs are created once and reused across widgets', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-slider')
+            const inListeners = nodes.filter(n => n.type === 'websocket-listener' && n.path === '/ws/uieditor/ui-in')
+            const outListeners = nodes.filter(n => n.type === 'websocket-listener' && n.path === '/ws/uieditor/ui-out')
+            inListeners.length.should.equal(1)
+            outListeners.length.should.equal(1)
+        })
+
+        it('shared ui-out websocket-client is created once and reused', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-slider')
+            const sharedClients = nodes.filter(n => n.type === 'websocket-client' &&
+                n.path === 'ws://localhost:1880/ws/uieditor/ui-out' && !n.z)
+            sharedClients.length.should.equal(1)
+        })
+
+        it('the widget node is placed on the Used Widgets tab inside its plumbing group', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const tab = nodes.find(n => n.type === 'tab' && n.label === 'Used Widgets (UI-Editor)')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const group = nodes.find(n => n.type === 'group' && n.z === tab.id)
+            widget.z.should.equal(tab.id)
+            widget.g.should.equal(group.id)
+            group.nodes.indexOf(widget.id).should.be.greaterThanOrEqual(0)
+        })
+
+        it('input-category widget group contains websocket-in, filter switch, function and websocket-out', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const groupId = widget.g
+            const members = nodes.filter(n => n.g === groupId)
+            members.some(n => n.type === 'websocket in').should.be.true()
+            members.some(n => n.type === 'switch' && n.name === 'filter widgetid').should.be.true()
+            members.some(n => n.type === 'function' && /clean up msg/.test(n.name)).should.be.true()
+            members.some(n => n.type === 'websocket out').should.be.true()
+        })
+
+        it('output-only widget group contains websocket-in and filter switch but no function/websocket-out', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-gauge')
+            const widget = nodes.find(n => n.type === 'ui-gauge')
+            const groupId = widget.g
+            const members = nodes.filter(n => n.g === groupId)
+            members.some(n => n.type === 'websocket in').should.be.true()
+            members.some(n => n.type === 'switch' && n.name === 'filter widgetid').should.be.true()
+            members.some(n => n.type === 'function').should.be.false()
+            members.some(n => n.type === 'websocket out').should.be.false()
+        })
+
+        it('the widget-group filter switch hardcodes the widget id (vt: str)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const sw = nodes.find(n => n.type === 'switch' && n.g === widget.g)
+            sw.property.should.equal('uieditor.widgetid')
+            sw.rules[0].vt.should.equal('str')
+            sw.rules[0].v.should.equal(widget.id)
+        })
+
+        it('the function node body references the widget id and uses "clean up" (no typo)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const fn = nodes.find(n => n.type === 'function' && n.g === widget.g)
+            fn.name.should.match(/^clean up/)
+            fn.func.should.containEql(widget.id)
+            fn.func.should.containEql('uieditor')
+            fn.func.should.containEql('payload')
+        })
+
+        it('subflow exposes a widgetid env var matching the widget id', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const sf = RED._subflows[0]
+            const widgetidEnv = sf.env.find(e => e.name === 'widgetid')
+            should(widgetidEnv).not.be.undefined()
+            widgetidEnv.value.should.equal(widget.id)
+            widgetidEnv.type.should.equal('str')
+        })
+
+        it('input-category subflow contains change, websocket-out, websocket-in and filter switch', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const sf = RED._subflows[0]
+            // Cross-context arrays from JSDOM don't inherit should's prototype
+            // patch — wrap with should() to use the static API.
+            const types = Array.from(sf.nodes).map(n => n.type)
+            should(types).containEql('change')
+            should(types).containEql('websocket out')
+            should(types).containEql('websocket in')
+            should(types).containEql('switch')
+            should(types).containEql('websocket-client')
+        })
+
+        it('output-only subflow contains change + websocket-out only (no filter switch / websocket-in)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-gauge')
+            const sf = RED._subflows[0]
+            const types = Array.from(sf.nodes).map(n => n.type)
+            should(types).containEql('change')
+            should(types).containEql('websocket out')
+            should(types).not.containEql('switch')
+            should(types).not.containEql('websocket in')
+        })
+
+        it('subflow filter switch uses env-based widgetid lookup (vt: env)', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const sf = RED._subflows[0]
+            const sw = sf.nodes.find(n => n.type === 'switch')
+            sw.rules[0].vt.should.equal('env')
+            sw.rules[0].v.should.equal('widgetid')
+        })
+
+        it('removing a widget tears down its plumbing group and member nodes', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            const widget = nodes.find(n => n.type === 'ui-button')
+            const groupId = widget.g
+            // Plumbing was created.
+            nodes.some(n => n.id === groupId).should.be.true()
+            nodes.filter(n => n.g === groupId).length.should.be.greaterThan(0)
+            // Trigger canvas-style removal (the editor's nodes:remove hook).
+            // In real Node-RED the widget is already gone by the time the
+            // event fires; mirror that here.
+            const widgetIdx = nodes.indexOf(widget)
+            if (widgetIdx >= 0) nodes.splice(widgetIdx, 1)
+            RED._emit('nodes:remove', widget)
+            // Group and its members are gone.
+            nodes.some(n => n.id === groupId).should.be.false()
+            nodes.filter(n => n.g === groupId).length.should.equal(0)
+        })
+
+        it('removing one of two widgets keeps shared listeners + tab intact', function () {
+            const nodes = onePageOneGroup()
+            const { root, window, RED } = boot(nodes)
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-button')
+            dropPaletteWidget(window, root.querySelector('.d2ed-group-body'), 'ui-slider')
+            const button = nodes.find(n => n.type === 'ui-button')
+            RED._emit('nodes:remove', button)
+            nodes.some(n => n.type === 'tab' && n.label === 'Used Widgets (UI-Editor)').should.be.true()
+            nodes.filter(n => n.type === 'websocket-listener').length.should.equal(2)
         })
     })
 })
