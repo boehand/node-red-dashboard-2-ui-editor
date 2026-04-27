@@ -38,6 +38,16 @@
                         <select class="d2ed-base-select"></select>
                     </div>
                     <div class="d2ed-toolbar-right">
+                        <label class="d2ed-toggle" title="Hide the auto-generated 'Used Widgets (UI-Editor)' category in Node-RED's left palette">
+                            <input type="checkbox" data-action="toggle-hide-subflows">
+                            <span class="d2ed-toggle-track"><span class="d2ed-toggle-thumb"></span></span>
+                            <span class="d2ed-toggle-label">Hide subflows</span>
+                        </label>
+                        <label class="d2ed-toggle" title="Maximise the UI editor over the whole window">
+                            <input type="checkbox" data-action="toggle-fullscreen">
+                            <span class="d2ed-toggle-track"><span class="d2ed-toggle-thumb"></span></span>
+                            <span class="d2ed-toggle-label">Full screen</span>
+                        </label>
                         <button class="d2ed-btn" data-action="add-page" title="Add page">
                             <i class="fa fa-plus"></i> Page
                         </button>
@@ -63,7 +73,18 @@
                         </div>
                     </aside>
                     <main class="d2ed-preview-wrap">
-                        <div class="d2ed-page-tabs"></div>
+                        <div class="d2ed-page-bar">
+                            <div class="d2ed-page-tabs"></div>
+                            <div class="d2ed-layout-selector" hidden>
+                                <label class="d2ed-layout-label">Layout:</label>
+                                <select class="d2ed-layout-select" title="Page layout (ui-page.layout)">
+                                    <option value="grid">Grid</option>
+                                    <option value="flex">Flex</option>
+                                    <option value="notebook">Notebook</option>
+                                    <option value="tabs">Tabs</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="d2ed-preview"></div>
                         <div class="d2ed-empty-state" hidden>
                             <i class="fa fa-th-large"></i>
@@ -899,8 +920,23 @@
                 const page = pages.find(p => p.id === state.activePageId) || pages[0]
                 const groups = findGroups(page.id)
 
+                // Reflect the current layout in the toolbar dropdown so the
+                // user can switch the ui-page.layout property visually.
+                const layout = page.layout || 'grid'
+                layoutSelectorEl.hidden = false
+                layoutSelectEl.value = ['grid', 'flex', 'notebook', 'tabs'].indexOf(layout) >= 0 ? layout : 'grid'
+
                 const pageGrid = document.createElement('div')
-                pageGrid.className = 'd2ed-page'
+                pageGrid.className = 'd2ed-page d2ed-page--' + (layoutSelectEl.value)
+
+                // Total column count comes from the page's largest breakpoint;
+                // groups span their `width` cols inside that grid (matching the
+                // Dashboard 2 deployed view, where groups sit side-by-side).
+                const breakpoints = Array.isArray(page.breakpoints) ? page.breakpoints : []
+                const totalCols = breakpoints.length
+                    ? Math.max.apply(null, breakpoints.map(b => Number(b.cols) || 0))
+                    : 12
+                pageGrid.style.setProperty('--page-cols', String(totalCols || 12))
 
                 if (!groups.length) {
                     const hint = document.createElement('div')
@@ -909,16 +945,23 @@
                     makeDropZone(hint, { page })
                     pageGrid.appendChild(hint)
                 } else {
-                    groups.forEach(g => pageGrid.appendChild(renderGroup(g)))
+                    groups.forEach(g => pageGrid.appendChild(renderGroup(g, totalCols)))
                 }
                 previewEl.appendChild(pageGrid)
             }
 
-            function renderGroup (group) {
+            function renderGroup (group, pageCols) {
                 const widgets = findWidgets(group.id)
+                const groupCols = group.width || 6
                 const el = document.createElement('section')
                 el.className = 'd2ed-group'
-                el.style.setProperty('--group-cols', String(group.width || 6))
+                el.style.setProperty('--group-cols', String(groupCols))
+                // Spans on the parent grid let groups sit side-by-side and
+                // wrap once the row's column budget is exhausted, matching
+                // Dashboard 2's deployed grid layout.
+                if (pageCols) {
+                    el.style.gridColumn = 'span ' + Math.min(groupCols, pageCols)
+                }
                 el.dataset.groupId = group.id
 
                 const head = document.createElement('header')
@@ -1211,6 +1254,67 @@
                 commit()
             })
             root.querySelector('[data-action="refresh"]').addEventListener('click', () => render())
+
+            // -------- toolbar toggles --------
+            // Stylesheet element used to inject one-off rules (e.g. hide our
+            // subflow palette section in the Node-RED canvas).
+            const toggleStyleEl = document.createElement('style')
+            toggleStyleEl.id = 'd2ed-toggle-styles'
+            document.head.appendChild(toggleStyleEl)
+
+            const hideSubflowsToggle = root.querySelector('[data-action="toggle-hide-subflows"]')
+            const fullscreenToggle = root.querySelector('[data-action="toggle-fullscreen"]')
+
+            // The Node-RED palette renders each subflow category as a header
+            // followed by its node tiles. Categories carry their label as a
+            // data-attribute on the toggle header (`data-cat`) and on the
+            // palette node entries (`palette-header-Used Widgets (UI-Editor)`
+            // / `red-ui-palette-header-collapse-Used Widgets (UI-Editor)`).
+            // We hide every element whose category attribute references our
+            // generated category — works regardless of the user's collapse
+            // state.
+            function applyHideSubflowsState () {
+                if (hideSubflowsToggle.checked) {
+                    toggleStyleEl.textContent =
+                        // Category header + node tiles in the main palette.
+                        '#palette-container .palette-category[data-category="subflow:' + SUBFLOW_CATEGORY + '"],' +
+                        '#palette-container [id^="palette_node_subflow:' + SUBFLOW_CATEGORY + '"],' +
+                        // Subflow type entries listed under "subflow" category
+                        // when Node-RED uses the legacy DOM layout.
+                        '#palette-container [data-palette-type^="subflow:"][data-palette-label*="' + SUBFLOW_CATEGORY + '"]' +
+                        ' { display: none !important; }'
+                } else {
+                    toggleStyleEl.textContent = ''
+                }
+            }
+            hideSubflowsToggle.addEventListener('change', applyHideSubflowsState)
+
+            // Fullscreen mode: pin the editor root over the entire viewport
+            // so neither the Node-RED palette nor the flow canvas is visible.
+            // Also hides Node-RED's own header so the editor truly fills the
+            // window. A class on <body> drives both pieces from CSS.
+            function applyFullscreenState () {
+                if (fullscreenToggle.checked) {
+                    document.body.classList.add('d2ed-fullscreen')
+                } else {
+                    document.body.classList.remove('d2ed-fullscreen')
+                }
+            }
+            fullscreenToggle.addEventListener('change', applyFullscreenState)
+
+            // -------- page layout selector --------
+            const layoutSelectorEl = root.querySelector('.d2ed-layout-selector')
+            const layoutSelectEl = root.querySelector('.d2ed-layout-select')
+            layoutSelectEl.addEventListener('change', () => {
+                const base = findBase()
+                if (!base) return
+                const pages = findPages(base.id)
+                const page = pages.find(p => p.id === state.activePageId) || pages[0]
+                if (!page) return
+                page.layout = layoutSelectEl.value
+                if (page._def) RED.nodes.dirty(true)
+                render()
+            })
 
             // -------- flow → preview sync --------
             RED.events.on('nodes:add', render)
