@@ -740,36 +740,54 @@
                 return found
             }
 
+            // Re-entry guard so the cascade — which itself fires further
+            // nodes:remove events — never recurses into the same widget.
+            const _removingWidgets = new Set()
+
             function removeWidgetArtifacts (widgetId) {
-                const sf = findWidgetSubflow(widgetId)
-                let removedAny = false
-                if (sf) {
-                    if (Array.isArray(sf.nodes)) {
-                        sf.nodes.forEach(n => {
+                if (!widgetId || _removingWidgets.has(widgetId)) return false
+                _removingWidgets.add(widgetId)
+                try {
+                    let removedAny = false
+
+                    const group = findWidgetGroup(widgetId)
+                    if (group) {
+                        const memberIds = Array.isArray(group.nodes) ? group.nodes.slice() : []
+                        memberIds.forEach(id => {
+                            if (id === widgetId) return
+                            try { RED.nodes.remove(id) } catch (e) { /* node already gone */ }
+                        })
+                        try { RED.nodes.remove(group.id); removedAny = true } catch (e) { /* ignore */ }
+                    }
+
+                    const sf = findWidgetSubflow(widgetId)
+                    if (sf) {
+                        const internalSnapshot = Array.isArray(sf.nodes) ? sf.nodes.slice() : []
+                        try {
+                            if (typeof RED.nodes.removeSubflow === 'function') {
+                                RED.nodes.removeSubflow(sf.id)
+                            } else if (typeof RED.nodes.remove === 'function') {
+                                RED.nodes.remove(sf.id)
+                            }
+                            removedAny = true
+                        } catch (err) {
+                            console.error('Failed to remove widget subflow:', err, sf)
+                        }
+                        // Sweep any internal nodes left behind by removeSubflow:
+                        // only touch nodes that demonstrably belong to THIS subflow
+                        // and are still present in the registry.
+                        internalSnapshot.forEach(n => {
+                            if (!n || !n.id) return
+                            if (n.z !== sf.id) return
+                            if (typeof RED.nodes.node === 'function' && !RED.nodes.node(n.id)) return
                             try { RED.nodes.remove(n.id) } catch (e) { /* ignore */ }
                         })
                     }
-                    try {
-                        if (typeof RED.nodes.removeSubflow === 'function') {
-                            RED.nodes.removeSubflow(sf.id)
-                        } else if (typeof RED.nodes.remove === 'function') {
-                            RED.nodes.remove(sf.id)
-                        }
-                        removedAny = true
-                    } catch (err) {
-                        console.error('Failed to remove widget subflow:', err, sf)
-                    }
+
+                    return removedAny
+                } finally {
+                    _removingWidgets.delete(widgetId)
                 }
-                const group = findWidgetGroup(widgetId)
-                if (group) {
-                    const memberIds = (group.nodes || []).slice()
-                    memberIds.forEach(id => {
-                        if (id === widgetId) return
-                        try { RED.nodes.remove(id) } catch (e) { /* ignore */ }
-                    })
-                    try { RED.nodes.remove(group.id); removedAny = true } catch (e) { /* ignore */ }
-                }
-                return removedAny
             }
 
             // Backwards-compatible alias for callers / tests that referenced the
@@ -1328,9 +1346,10 @@
             // (e.g. via the Node-RED canvas) and remove the companion subflow
             // from the palette so it never lingers without its widget.
             RED.events.on('nodes:remove', function (n) {
-                if (n && n.id && n.type && isWidgetNodeType(n.type)) {
-                    removeWidgetSubflow(n.id)
-                }
+                if (!n || !n.id || !n.type) return
+                if (_removingWidgets.has(n.id)) return
+                if (!isWidgetNodeType(n.type)) return
+                removeWidgetSubflow(n.id)
             })
 
             // initial paint
